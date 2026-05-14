@@ -7,6 +7,7 @@ const modalContent = document.querySelector("#modal-content");
 const weddingAudio = document.querySelector("#wedding-audio");
 const musicToggle = document.querySelector("[data-music-toggle]");
 const audioStartTime = 11;
+const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
 
 const gifts = [
@@ -75,6 +76,40 @@ function updateCountdown() {
   const diff = weddingDate - today;
   const days = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
   countdown.textContent = days === 1 ? "Falta 1 dia" : `Faltam ${days} dias`;
+}
+
+function getSavedRsvp() {
+  try {
+    return JSON.parse(localStorage.getItem(rsvpStorageKey));
+  } catch (error) {
+    return null;
+  }
+}
+
+function saveRsvp(name, partySize) {
+  const guestName = name.trim().replace(/\s+/g, " ");
+  if (!guestName) return;
+
+  localStorage.setItem(
+    rsvpStorageKey,
+    JSON.stringify({
+      name: guestName,
+      partySize,
+      confirmedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+function renderRsvpState() {
+  const savedRsvp = getSavedRsvp();
+  const heroCopy = document.querySelector(".hero-copy");
+  const rsvpButton = document.querySelector("[data-open-rsvp]");
+
+  if (!heroCopy || !rsvpButton || !savedRsvp?.name) return;
+
+  heroCopy.textContent = `Olá, ${savedRsvp.name}! Sua presença já foi confirmada. Te esperamos lá. Se entrou aqui procurando um presentinho, a lista de presentes está logo abaixo.`;
+  heroCopy.classList.add("confirmed");
+  rsvpButton.hidden = true;
 }
 
 function syncMusicButton() {
@@ -318,7 +353,12 @@ document.addEventListener("submit", (event) => {
 
   if (rsvpForm) {
     event.preventDefault();
-    showSuccess("Presença confirmada com sucesso.");
+    const formData = new FormData(rsvpForm);
+    const guestName = String(formData.get("guestName") || "");
+    const partySize = String(formData.get("partySize") || "");
+    saveRsvp(guestName, partySize);
+    renderRsvpState();
+    showSuccess("Presença confirmada com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.");
   }
 
   if (giftForm) {
@@ -342,5 +382,6 @@ document.addEventListener("keydown", (event) => {
 
 updateCountdown();
 renderGifts();
+renderRsvpState();
 syncMusicButton();
 startWeddingAudio();

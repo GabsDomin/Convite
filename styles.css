@@ -135,6 +135,17 @@ h3 {
   line-height: 1.55;
 }
 
+.hero-copy.confirmed {
+  width: min(100%, 660px);
+  border: 1px solid rgba(0, 63, 152, 0.18);
+  border-radius: 8px;
+  padding: 1rem 1.15rem;
+  color: var(--royal-dark);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 18px 40px rgba(0, 47, 115, 0.12);
+  font-weight: 600;
+}
+
 .event-grid,
 .cards,
 .gift-grid {
