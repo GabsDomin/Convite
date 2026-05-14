@@ -9,6 +9,7 @@ const musicToggle = document.querySelector("[data-music-toggle]");
 const audioStartTime = 11;
 const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
+let audioBlocked = false;
 
 const gifts = [
   { id: "utensilios", type: "fixed", section: "daily", name: "Kit de utensílios de cozinha", value: 120, category: "Cozinha", text: "Para ajudar nos primeiros preparos da nossa casa.", status: "available" },
@@ -119,7 +120,7 @@ function syncMusicButton() {
   musicToggle.setAttribute("aria-pressed", String(weddingAudio.muted));
 
   const label = musicToggle.querySelector("span");
-  if (!audioStarted && weddingAudio.paused) {
+  if (audioBlocked && weddingAudio.paused) {
     musicToggle.setAttribute("aria-label", "Tocar música");
     if (label) label.textContent = "Tocar";
     return;
@@ -133,15 +134,25 @@ async function startWeddingAudio() {
   if (!weddingAudio || audioStarted) return;
 
   try {
-    weddingAudio.currentTime = audioStartTime;
+    if (weddingAudio.currentTime < audioStartTime) {
+      weddingAudio.currentTime = audioStartTime;
+    }
     weddingAudio.volume = 0.55;
+    weddingAudio.muted = false;
     await weddingAudio.play();
     audioStarted = true;
+    audioBlocked = false;
   } catch (error) {
     audioStarted = false;
+    audioBlocked = true;
   }
 
   syncMusicButton();
+}
+
+function enableAudioAfterInteraction() {
+  if (audioStarted || !audioBlocked) return;
+  startWeddingAudio();
 }
 
 async function toggleMusic() {
@@ -378,6 +389,10 @@ modal.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && modal.classList.contains("open")) closeModal();
+});
+
+["pointerdown", "touchstart", "keydown", "scroll"].forEach((eventName) => {
+  window.addEventListener(eventName, enableAudioAfterInteraction, { passive: true, once: false });
 });
 
 updateCountdown();
