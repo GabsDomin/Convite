@@ -270,7 +270,7 @@ function openRsvpModal() {
         Quantidade de pessoas
         <select name="partySize" required>
           <option>Somente eu</option>
-          <option>Eu + 1 acompanhante</option>
+          <option>Eu e meus filhos</option>
         </select>
       </label>
       <div class="modal-actions">
