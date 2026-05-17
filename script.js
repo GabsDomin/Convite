@@ -11,7 +11,7 @@ const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
 let audioBlocked = false;
 
-const gifts = [
+let gifts = [
   { id: "panos-prato", type: "fixed", section: "daily", name: "Kit de panos de prato", value: 35, category: "Cozinha", text: "Para deixar nossa cozinha mais prática no dia a dia.", status: "available" },
   { id: "descanso-panelas", type: "fixed", section: "daily", name: "Descanso de panelas", value: 35, category: "Cozinha", text: "Para cuidar da mesa nos almoços em casa.", status: "available" },
   { id: "colheres-pau", type: "fixed", section: "daily", name: "Kit de colheres de pau", value: 40, category: "Cozinha", text: "Para os primeiros preparos na nossa cozinha.", status: "available" },
@@ -83,6 +83,20 @@ function formatCurrency(value) {
     currency: "BRL",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Não foi possível salvar agora.");
+  }
+
+  return payload;
 }
 
 function updateCountdown() {
@@ -221,6 +235,18 @@ function renderGifts() {
     .join("");
 }
 
+async function loadGifts() {
+  try {
+    const payload = await requestJson("/api/gifts");
+    if (Array.isArray(payload.gifts) && payload.gifts.length) {
+      gifts = payload.gifts;
+      renderGifts();
+    }
+  } catch (error) {
+    renderGifts();
+  }
+}
+
 function renderGiftCard(gift) {
   const reserved = gift.status === "reserved";
   const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
@@ -270,6 +296,19 @@ function showSuccess(message) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 6-11 11-5-5" /></svg>
     </div>
     <h2 id="modal-title" class="success-title">Recebido com carinho!</h2>
+    <p>${message}</p>
+    <div class="modal-actions">
+      <button class="button primary" data-close-modal>Fechar</button>
+    </div>
+  `);
+}
+
+function showError(message) {
+  openModal(`
+    <div class="modal-icon">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+    </div>
+    <h2 id="modal-title" class="success-title">Não foi possível salvar</h2>
     <p>${message}</p>
     <div class="modal-actions">
       <button class="button primary" data-close-modal>Fechar</button>
@@ -372,7 +411,7 @@ document.addEventListener("click", (event) => {
   }
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   const rsvpForm = event.target.closest("[data-rsvp-form]");
   const giftForm = event.target.closest("[data-gift-form]");
 
@@ -381,19 +420,46 @@ document.addEventListener("submit", (event) => {
     const formData = new FormData(rsvpForm);
     const guestName = String(formData.get("guestName") || "");
     const partySize = String(formData.get("partySize") || "");
-    saveRsvp(guestName, partySize);
-    renderRsvpState();
-    showSuccess("Presença confirmada com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.");
+
+    try {
+      await requestJson("/api/rsvp", {
+        method: "POST",
+        body: JSON.stringify({ guestName, partySize }),
+      });
+      saveRsvp(guestName, partySize);
+      renderRsvpState();
+      showSuccess("Presença confirmada com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.");
+    } catch (error) {
+      showError(error.message);
+    }
   }
 
   if (giftForm) {
     event.preventDefault();
+    const formData = new FormData(giftForm);
     const gift = gifts.find((item) => item.id === giftForm.dataset.giftForm);
-    if (gift && gift.type === "fixed") {
-      gift.status = "reserved";
-      renderGifts();
+    const guestName = String(formData.get("guestName") || "");
+    const quotaValue = Number(formData.get("quotaValue") || 0);
+
+    try {
+      await requestJson("/api/gifts/reserve", {
+        method: "POST",
+        body: JSON.stringify({
+          giftId: gift?.id,
+          guestName,
+          amount: gift?.type === "quota" ? quotaValue : undefined,
+        }),
+      });
+
+      if (gift && gift.type === "fixed") {
+        gift.status = "reserved";
+        renderGifts();
+      }
+
+      showSuccess(gift?.type === "quota" ? "Sua contribuição foi registrada para os noivos." : "Seu presente foi registrado para os noivos.");
+    } catch (error) {
+      showError(error.message);
     }
-    showSuccess(gift?.type === "quota" ? "Sua contribuição foi registrada para os noivos." : "Seu presente foi registrado para os noivos.");
   }
 });
 
@@ -411,6 +477,7 @@ document.addEventListener("keydown", (event) => {
 
 updateCountdown();
 renderGifts();
+loadGifts();
 renderRsvpState();
 startWeddingAudio();
 syncMusicButton();
