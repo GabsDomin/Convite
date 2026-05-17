@@ -116,7 +116,7 @@ function renderRsvpState() {
 function syncMusicButton() {
   if (!musicToggle || !weddingAudio) return;
 
-  musicToggle.classList.toggle("is-muted", weddingAudio.muted || weddingAudio.paused);
+  musicToggle.classList.toggle("is-muted", weddingAudio.muted || audioBlocked);
   musicToggle.setAttribute("aria-pressed", String(weddingAudio.muted));
 
   const label = musicToggle.querySelector("span");
@@ -133,12 +133,13 @@ function syncMusicButton() {
 async function startWeddingAudio() {
   if (!weddingAudio || audioStarted) return;
 
+  weddingAudio.muted = false;
+
   try {
     if (weddingAudio.currentTime < audioStartTime) {
       weddingAudio.currentTime = audioStartTime;
     }
     weddingAudio.volume = 0.55;
-    weddingAudio.muted = false;
     await weddingAudio.play();
     audioStarted = true;
     audioBlocked = false;
@@ -398,5 +399,5 @@ document.addEventListener("keydown", (event) => {
 updateCountdown();
 renderGifts();
 renderRsvpState();
-syncMusicButton();
 startWeddingAudio();
+syncMusicButton();
