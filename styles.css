@@ -48,7 +48,10 @@ button {
   padding: clamp(8.5rem, 12vw, 10rem) 1.25rem clamp(8rem, 11vw, 9.5rem);
   background-image:
     linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.2)),
-    url("assets/background-desktop.png");
+    image-set(
+      url("assets/background-desktop.jpg") type("image/jpeg"),
+      url("assets/background-desktop.png") type("image/png")
+    );
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -632,7 +635,10 @@ svg {
   .hero {
     background-image:
       linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.18)),
-      url("assets/background-mobile.png");
+      image-set(
+        url("assets/background-mobile.jpg") type("image/jpeg"),
+        url("assets/background-mobile.png") type("image/png")
+      );
     background-position: center top;
   }
 }

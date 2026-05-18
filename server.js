@@ -70,14 +70,18 @@ async function callSupabaseRpc(functionName, payload = {}) {
 }
 
 function normalizeGift(gift) {
+  const quotaOptions = Array.isArray(gift.quota_options)
+    ? gift.quota_options
+    : [];
+
   return {
     id: gift.id,
     type: gift.gift_type,
     section: gift.section,
     name: gift.name,
-    value: gift.value,
-    goal: gift.goal,
-    options: gift.quota_options,
+    value: Number(gift.value || 0),
+    goal: Number(gift.goal || 0),
+    options: quotaOptions.map(Number),
     category: gift.category,
     text: gift.description,
     status: gift.status,

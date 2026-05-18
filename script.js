@@ -1,5 +1,3 @@
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/supabase.es.js";
-
 const weddingDate = new Date("2026-11-14T11:30:00-03:00");
 const countdown = document.querySelector("#countdown");
 const giftGrid = document.querySelector("#gift-grid");
@@ -12,7 +10,6 @@ const audioStartTime = 11;
 const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
 let audioBlocked = false;
-let supabaseRealtime = null;
 
 let gifts = [
   { id: "panos-prato", type: "fixed", section: "daily", name: "Kit de panos de prato", value: 35, category: "Cozinha", text: "Para deixar nossa cozinha mais prática no dia a dia.", status: "available" },
@@ -103,6 +100,8 @@ async function requestJson(url, options = {}) {
 }
 
 function updateCountdown() {
+  if (!countdown) return;
+
   const today = new Date();
   const diff = weddingDate - today;
   const days = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
@@ -210,6 +209,8 @@ function giftIcon() {
 }
 
 function renderGifts() {
+  if (!giftFilters || !giftGrid) return;
+
   const currentFilter = filters.find((filter) => filter.id === activeFilter) || filters[0];
   const filteredGifts = gifts.filter(currentFilter.match);
 
@@ -242,7 +243,7 @@ async function loadGifts() {
   try {
     const payload = await requestJson("/api/gifts");
     if (Array.isArray(payload.gifts) && payload.gifts.length) {
-      gifts = payload.gifts;
+      gifts = payload.gifts.map(normalizeGiftForUi);
       renderGifts();
     }
   } catch (error) {
@@ -250,30 +251,14 @@ async function loadGifts() {
   }
 }
 
-async function loadConfig() {
-  try {
-    return await requestJson("/api/config");
-  } catch {
-    return null;
-  }
-}
-
-async function initRealtime() {
-  const config = await loadConfig();
-  if (!config?.supabaseUrl || !config?.supabaseAnonKey) return;
-
-  supabaseRealtime = createClient(config.supabaseUrl, config.supabaseAnonKey);
-
-  supabaseRealtime
-    .channel("public:gifts")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "gifts" },
-      () => {
-        loadGifts();
-      },
-    )
-    .subscribe();
+function normalizeGiftForUi(gift) {
+  return {
+    ...gift,
+    value: Number(gift.value || 0),
+    goal: Number(gift.goal || 0),
+    options: Array.isArray(gift.options) ? gift.options.map(Number) : [],
+    status: gift.status || "available",
+  };
 }
 
 function renderGiftCard(gift) {
@@ -290,7 +275,7 @@ function renderGiftCard(gift) {
         <p class="gift-price">${valueText}</p>
         <p class="gift-description">${gift.text}</p>
       </div>
-      ${gift.type === "quota" ? `
+      ${gift.type === "quota" && gift.options.length ? `
         <div class="quota-options" aria-label="Opções de cota para ${gift.name}">
           ${gift.options.map((option) => `<span>${formatCurrency(option)}</span>`).join("")}
         </div>
@@ -506,8 +491,14 @@ document.addEventListener("keydown", (event) => {
 
 updateCountdown();
 renderGifts();
-loadGifts();
-initRealtime();
 renderRsvpState();
-startWeddingAudio();
 syncMusicButton();
+
+window.addEventListener("load", () => {
+  loadGifts();
+  startWeddingAudio();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadGifts();
+});
