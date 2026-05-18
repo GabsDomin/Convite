@@ -3,13 +3,20 @@ import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(__dirname);
 const port = Number(process.env.PORT || 3000);
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey, {
+      realtime: {
+        transport: WebSocket,
+      },
+    })
+  : null;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -74,6 +81,14 @@ async function handleApi(request, response, pathname) {
       const { data, error } = await supabase.rpc("get_public_gifts");
       if (error) throw error;
       sendJson(response, 200, { gifts: data.map(normalizeGift) });
+      return true;
+    }
+
+    if (request.method === "GET" && pathname === "/api/config") {
+      sendJson(response, 200, {
+        supabaseUrl,
+        supabaseAnonKey: supabaseKey,
+      });
       return true;
     }
 
