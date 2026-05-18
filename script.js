@@ -424,13 +424,14 @@ function openGiftModal(gift) {
       ` : `
         <p class="modal-value">Valor do presente: <strong>${formatCurrency(gift.value)}</strong></p>
       `}
+      <input type="hidden" name="paymentMethod" value="pix" />
       <div class="payment-methods" aria-label="Formas de pagamento">
-        <button class="payment-method" type="submit" name="paymentMethod" value="pix">
+        <button class="payment-method selected" type="button" data-payment-method="pix" aria-pressed="true">
           <span>${paymentMethodIcon("pix")}</span>
           <strong>Pix</strong>
-          <small>Registrar e seguir com o Pix</small>
+          <small>Confirmar e seguir com o Pix</small>
         </button>
-        <button class="payment-method" type="submit" name="paymentMethod" value="card" ${hasCardPayment ? "" : "disabled"}>
+        <button class="payment-method" type="button" data-payment-method="card" aria-pressed="false" ${hasCardPayment ? "" : "disabled"}>
           <span>${paymentMethodIcon("card")}</span>
           <strong>Cartão de crédito</strong>
           <small>${hasCardPayment ? "Pagar pelo Infinity Pay" : "Em breve pelo Infinity Pay"}</small>
@@ -438,6 +439,7 @@ function openGiftModal(gift) {
       </div>
       <div class="modal-actions">
         <button class="button secondary" type="button" data-close-modal>Cancelar</button>
+        <button class="button primary" type="submit">Confirmar</button>
       </div>
     </form>
   `);
@@ -469,6 +471,21 @@ document.addEventListener("click", async (event) => {
   if (filterButton) {
     activeFilter = filterButton.dataset.giftFilter;
     renderGifts();
+    return;
+  }
+
+  const paymentButton = event.target.closest("[data-payment-method]");
+  if (paymentButton) {
+    const paymentForm = paymentButton.closest("[data-gift-form]");
+    const paymentInput = paymentForm?.querySelector('input[name="paymentMethod"]');
+    if (!paymentForm || !paymentInput || paymentButton.disabled) return;
+
+    paymentInput.value = paymentButton.dataset.paymentMethod;
+    paymentForm.querySelectorAll("[data-payment-method]").forEach((button) => {
+      const selected = button === paymentButton;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
     return;
   }
 
@@ -511,7 +528,7 @@ document.addEventListener("submit", async (event) => {
     const gift = gifts.find((item) => item.id === giftForm.dataset.giftForm);
     const guestName = String(formData.get("guestName") || "");
     const quotaValue = Number(formData.get("quotaValue") || 0);
-    const paymentMethod = event.submitter?.value === "card" ? "card" : "pix";
+    const paymentMethod = String(formData.get("paymentMethod") || "pix") === "card" ? "card" : "pix";
     const cardPaymentUrl = getCardPaymentUrl();
 
     if (paymentMethod === "card" && !cardPaymentUrl) {
