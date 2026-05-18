@@ -1,3 +1,5 @@
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/supabase.es.js";
+
 const weddingDate = new Date("2026-11-14T11:30:00-03:00");
 const countdown = document.querySelector("#countdown");
 const giftGrid = document.querySelector("#gift-grid");
@@ -10,6 +12,7 @@ const audioStartTime = 11;
 const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
 let audioBlocked = false;
+let supabaseRealtime = null;
 
 let gifts = [
   { id: "panos-prato", type: "fixed", section: "daily", name: "Kit de panos de prato", value: 35, category: "Cozinha", text: "Para deixar nossa cozinha mais prática no dia a dia.", status: "available" },
@@ -247,6 +250,32 @@ async function loadGifts() {
   }
 }
 
+async function loadConfig() {
+  try {
+    return await requestJson("/api/config");
+  } catch {
+    return null;
+  }
+}
+
+async function initRealtime() {
+  const config = await loadConfig();
+  if (!config?.supabaseUrl || !config?.supabaseAnonKey) return;
+
+  supabaseRealtime = createClient(config.supabaseUrl, config.supabaseAnonKey);
+
+  supabaseRealtime
+    .channel("public:gifts")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "gifts" },
+      () => {
+        loadGifts();
+      },
+    )
+    .subscribe();
+}
+
 function renderGiftCard(gift) {
   const reserved = gift.status === "reserved";
   const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
@@ -478,6 +507,7 @@ document.addEventListener("keydown", (event) => {
 updateCountdown();
 renderGifts();
 loadGifts();
+initRealtime();
 renderRsvpState();
 startWeddingAudio();
 syncMusicButton();
