@@ -283,11 +283,20 @@ svg {
 
 .section-heading {
   width: min(100%, 720px);
-  margin: 0 auto 3rem;
+  margin: 0 auto 3.25rem;
   text-align: center;
 }
 
+.section-heading .eyebrow {
+  margin-bottom: 0.85rem;
+}
+
+.section-heading h2 {
+  margin-bottom: 1.1rem;
+}
+
 .section-heading p {
+  margin-inline: auto;
   font-size: 1.08rem;
   line-height: 1.7;
 }
