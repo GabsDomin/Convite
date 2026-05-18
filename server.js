@@ -22,6 +22,8 @@ const mimeTypes = {
   ".ico": "image/x-icon",
 };
 
+const noCacheExtensions = new Set([".html", ".css", ".js"]);
+
 function resolveRequestPath(url) {
   const pathname = decodeURIComponent(new URL(url, `http://localhost:${port}`).pathname);
   const cleanPath = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
@@ -153,9 +155,13 @@ createServer(async (request, response) => {
     return;
   }
 
+  const extension = extname(filePath).toLowerCase();
+
   response.writeHead(200, {
-    "Content-Type": mimeTypes[extname(filePath).toLowerCase()] || "application/octet-stream",
-    "Cache-Control": "public, max-age=3600",
+    "Content-Type": mimeTypes[extension] || "application/octet-stream",
+    "Cache-Control": noCacheExtensions.has(extension)
+      ? "no-cache, no-store, must-revalidate"
+      : "public, max-age=31536000, immutable",
   });
   createReadStream(filePath).pipe(response);
 }).listen(port, () => {
