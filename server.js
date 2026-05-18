@@ -8,6 +8,7 @@ const root = resolve(__dirname);
 const port = Number(process.env.PORT || 3000);
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const infinityPayCardUrl = process.env.INFINITY_PAY_CARD_URL || "";
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 
 const mimeTypes = {
@@ -91,6 +92,15 @@ function normalizeGift(gift) {
 }
 
 async function handleApi(request, response, pathname) {
+  if (request.method === "GET" && pathname === "/api/config") {
+    sendJson(response, 200, {
+      supabaseUrl: supabaseUrl || "",
+      supabaseAnonKey: supabaseKey || "",
+      infinityPayCardUrl,
+    });
+    return true;
+  }
+
   if (!hasSupabaseConfig) {
     sendJson(response, 503, { error: "Supabase não está configurado no Railway." });
     return true;
@@ -100,14 +110,6 @@ async function handleApi(request, response, pathname) {
     if (request.method === "GET" && pathname === "/api/gifts") {
       const gifts = await callSupabaseRpc("get_public_gifts");
       sendJson(response, 200, { gifts: gifts.map(normalizeGift) });
-      return true;
-    }
-
-    if (request.method === "GET" && pathname === "/api/config") {
-      sendJson(response, 200, {
-        supabaseUrl,
-        supabaseAnonKey: supabaseKey,
-      });
       return true;
     }
 

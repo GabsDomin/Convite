@@ -507,6 +507,64 @@ svg {
   text-align: center;
 }
 
+.payment-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.payment-method {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: center;
+  min-height: 6.8rem;
+  border: 1px solid rgba(0, 63, 152, 0.18);
+  border-radius: 8px;
+  padding: 0.85rem 0.75rem;
+  color: var(--royal-dark);
+  background: #fbfdff;
+  text-align: center;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.payment-method:hover:not(:disabled) {
+  border-color: rgba(0, 63, 152, 0.42);
+  box-shadow: 0 16px 30px rgba(0, 47, 115, 0.12);
+  transform: translateY(-1px);
+}
+
+.payment-method:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.payment-method span {
+  display: grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  color: var(--royal);
+  background: var(--mist);
+}
+
+.payment-method svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.payment-method strong {
+  color: var(--royal-dark);
+  font-size: 0.96rem;
+}
+
+.payment-method small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .music-toggle {
   position: fixed;
   right: 1rem;
@@ -777,6 +835,10 @@ svg {
   .gift-footer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .payment-methods {
+    grid-template-columns: 1fr;
   }
 
   .button {

@@ -10,6 +10,8 @@ const audioStartTime = 11;
 const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
 let audioBlocked = false;
+let paymentConfig = null;
+let paymentConfigPromise = null;
 
 let gifts = [
   { id: "panos-prato", type: "fixed", section: "daily", name: "Kit de panos de prato", value: 35, category: "Cozinha", text: "Para deixar nossa cozinha mais prática no dia a dia.", status: "available" },
@@ -97,6 +99,46 @@ async function requestJson(url, options = {}) {
   }
 
   return payload;
+}
+
+async function loadPaymentConfig() {
+  if (paymentConfig) return paymentConfig;
+  if (!paymentConfigPromise) {
+    paymentConfigPromise = requestJson("/api/config")
+      .then((config) => {
+        paymentConfig = config;
+        return config;
+      })
+      .catch(() => {
+        paymentConfig = {};
+        return paymentConfig;
+      });
+  }
+
+  return paymentConfigPromise;
+}
+
+function getCardPaymentUrl() {
+  return paymentConfig?.infinityPayCardUrl || "";
+}
+
+function paymentMethodIcon(kind) {
+  if (kind === "card") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 7h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+        <path d="M3 10h18" />
+        <path d="M7 15h3" />
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3 5 10l7 7 7-7-7-7Z" />
+      <path d="m5 14 7 7 7-7" />
+    </svg>
+  `;
 }
 
 function updateCountdown() {
@@ -264,7 +306,7 @@ function normalizeGiftForUi(gift) {
 function renderGiftCard(gift) {
   const reserved = gift.status === "reserved";
   const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
-  const buttonText = gift.type === "quota" ? "Contribuir via Pix" : "Presentear via Pix";
+  const buttonText = gift.type === "quota" ? "Contribuir" : "Presentear";
 
   return `
     <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""}">
@@ -361,11 +403,12 @@ function openRsvpModal() {
 
 function openGiftModal(gift) {
   const isQuota = gift.type === "quota";
+  const hasCardPayment = Boolean(getCardPaymentUrl());
 
   openModal(`
     <div class="modal-icon">${giftIcon()}</div>
     <h2 id="modal-title">${isQuota ? "Contribuir com cota" : "Escolher presente"}</h2>
-    <p>${isQuota ? `Escolha uma cota e informe seu nome para contribuir com: <strong>${gift.name}</strong>.` : `Informe seu nome para reservar: <strong>${gift.name}</strong>.`}</p>
+    <p>${isQuota ? `Escolha uma cota, informe seu nome e siga com a forma de pagamento que preferir para: <strong>${gift.name}</strong>.` : `Informe seu nome e escolha como deseja presentear: <strong>${gift.name}</strong>.`}</p>
     <form data-gift-form="${gift.id}">
       <label>
         Seu nome
@@ -379,17 +422,28 @@ function openGiftModal(gift) {
           </select>
         </label>
       ` : `
-        <p class="modal-value">Valor Pix: <strong>${formatCurrency(gift.value)}</strong></p>
+        <p class="modal-value">Valor do presente: <strong>${formatCurrency(gift.value)}</strong></p>
       `}
+      <div class="payment-methods" aria-label="Formas de pagamento">
+        <button class="payment-method" type="submit" name="paymentMethod" value="pix">
+          <span>${paymentMethodIcon("pix")}</span>
+          <strong>Pix</strong>
+          <small>Registrar e seguir com o Pix</small>
+        </button>
+        <button class="payment-method" type="submit" name="paymentMethod" value="card" ${hasCardPayment ? "" : "disabled"}>
+          <span>${paymentMethodIcon("card")}</span>
+          <strong>Cartão de crédito</strong>
+          <small>${hasCardPayment ? "Pagar pelo Infinity Pay" : "Em breve pelo Infinity Pay"}</small>
+        </button>
+      </div>
       <div class="modal-actions">
         <button class="button secondary" type="button" data-close-modal>Cancelar</button>
-        <button class="button primary" type="submit">Enviar</button>
       </div>
     </form>
   `);
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const closeButton = event.target.closest("[data-close-modal]");
   if (closeButton) {
     closeModal();
@@ -421,7 +475,10 @@ document.addEventListener("click", (event) => {
   const giftButton = event.target.closest("[data-gift-id]");
   if (giftButton) {
     const gift = gifts.find((item) => item.id === giftButton.dataset.giftId);
-    if (gift && (gift.status === "available" || gift.type === "quota")) openGiftModal(gift);
+    if (gift && (gift.status === "available" || gift.type === "quota")) {
+      await loadPaymentConfig();
+      openGiftModal(gift);
+    }
   }
 });
 
@@ -454,6 +511,13 @@ document.addEventListener("submit", async (event) => {
     const gift = gifts.find((item) => item.id === giftForm.dataset.giftForm);
     const guestName = String(formData.get("guestName") || "");
     const quotaValue = Number(formData.get("quotaValue") || 0);
+    const paymentMethod = event.submitter?.value === "card" ? "card" : "pix";
+    const cardPaymentUrl = getCardPaymentUrl();
+
+    if (paymentMethod === "card" && !cardPaymentUrl) {
+      showError("O pagamento por cartÃ£o ainda nÃ£o estÃ¡ configurado. Por enquanto, escolha Pix.");
+      return;
+    }
 
     try {
       await requestJson("/api/gifts/reserve", {
@@ -468,6 +532,11 @@ document.addEventListener("submit", async (event) => {
       if (gift && gift.type === "fixed") {
         gift.status = "reserved";
         renderGifts();
+      }
+
+      if (paymentMethod === "card") {
+        window.location.href = cardPaymentUrl;
+        return;
       }
 
       showSuccess(gift?.type === "quota" ? "Sua contribuição foi registrada para os noivos." : "Seu presente foi registrado para os noivos.");
@@ -495,6 +564,7 @@ renderRsvpState();
 syncMusicButton();
 
 window.addEventListener("load", () => {
+  loadPaymentConfig();
   loadGifts();
   startWeddingAudio();
 });
