@@ -203,7 +203,12 @@ svg {
 }
 
 .event-grid strong {
+  color: #0d1724;
   font-size: 1.03rem;
+}
+
+.event-grid strong span {
+  color: inherit;
 }
 
 .mobile-date {
