@@ -1,4 +1,4 @@
-const weddingDate = new Date("2026-11-14T11:30:00-03:00");
+const weddingDate = new Date("2026-11-28T11:30:00-03:00");
 const countdown = document.querySelector("#countdown");
 const giftGrid = document.querySelector("#gift-grid");
 const giftFilters = document.querySelector("#gift-filters");
