@@ -2,21 +2,13 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createClient } from "@supabase/supabase-js";
-import WebSocket from "ws";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(__dirname);
 const port = Number(process.env.PORT || 3000);
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = supabaseUrl && supabaseKey
-  ? createClient(supabaseUrl, supabaseKey, {
-      realtime: {
-        transport: WebSocket,
-      },
-    })
-  : null;
+const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -55,6 +47,28 @@ async function readJsonBody(request) {
   return rawBody ? JSON.parse(rawBody) : {};
 }
 
+async function callSupabaseRpc(functionName, payload = {}) {
+  const endpoint = new URL(`/rest/v1/rpc/${functionName}`, supabaseUrl);
+  const supabaseResponse = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": supabaseKey,
+      "Authorization": `Bearer ${supabaseKey}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const responseText = await supabaseResponse.text();
+  const data = responseText ? JSON.parse(responseText) : null;
+
+  if (!supabaseResponse.ok) {
+    const message = data?.message || data?.error_description || data?.hint || "Erro ao chamar o Supabase.";
+    throw new Error(message);
+  }
+
+  return data;
+}
+
 function normalizeGift(gift) {
   return {
     id: gift.id,
@@ -71,16 +85,15 @@ function normalizeGift(gift) {
 }
 
 async function handleApi(request, response, pathname) {
-  if (!supabase) {
+  if (!hasSupabaseConfig) {
     sendJson(response, 503, { error: "Supabase não está configurado no Railway." });
     return true;
   }
 
   try {
     if (request.method === "GET" && pathname === "/api/gifts") {
-      const { data, error } = await supabase.rpc("get_public_gifts");
-      if (error) throw error;
-      sendJson(response, 200, { gifts: data.map(normalizeGift) });
+      const gifts = await callSupabaseRpc("get_public_gifts");
+      sendJson(response, 200, { gifts: gifts.map(normalizeGift) });
       return true;
     }
 
@@ -94,24 +107,22 @@ async function handleApi(request, response, pathname) {
 
     if (request.method === "POST" && pathname === "/api/rsvp") {
       const body = await readJsonBody(request);
-      const { data, error } = await supabase.rpc("confirm_rsvp", {
+      const rsvp = await callSupabaseRpc("confirm_rsvp", {
         p_guest_name: body.guestName,
         p_party_size: body.partySize,
       });
-      if (error) throw error;
-      sendJson(response, 200, { rsvp: data?.[0] });
+      sendJson(response, 200, { rsvp: rsvp?.[0] });
       return true;
     }
 
     if (request.method === "POST" && pathname === "/api/gifts/reserve") {
       const body = await readJsonBody(request);
-      const { data, error } = await supabase.rpc("reserve_gift", {
+      const reservation = await callSupabaseRpc("reserve_gift", {
         p_gift_id: body.giftId,
         p_guest_name: body.guestName,
         p_amount: body.amount ?? null,
       });
-      if (error) throw error;
-      sendJson(response, 200, { reservation: data?.[0] });
+      sendJson(response, 200, { reservation: reservation?.[0] });
       return true;
     }
 
