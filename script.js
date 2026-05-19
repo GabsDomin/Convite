@@ -313,7 +313,7 @@ async function loadGifts() {
       return;
     }
 
-    renderGiftMessage("Lista indisponivel", "Nao foi possivel carregar os presentes do Supabase. Tente novamente em alguns instantes.");
+    renderGiftMessage("Lista indisponivel", error.message || "Nao foi possivel carregar os presentes do Supabase. Tente novamente em alguns instantes.");
   }
 }
 
