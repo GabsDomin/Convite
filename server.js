@@ -211,6 +211,17 @@ async function createMercadoPagoPreference(order, request) {
         name: order.buyer_name,
         email: order.buyer_email,
       },
+      payment_methods: {
+        excluded_payment_methods: [
+          { id: "pix" },
+        ],
+        excluded_payment_types: [
+          { id: "bank_transfer" },
+          { id: "ticket" },
+          { id: "atm" },
+        ],
+        installments: 12,
+      },
       back_urls: {
         success: `${publicFrontendUrl}/pagamento/sucesso`,
         failure: `${publicFrontendUrl}/pagamento/erro`,
