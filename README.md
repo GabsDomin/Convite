@@ -75,4 +75,4 @@ Use credenciais sandbox/teste do Mercado Pago primeiro. Depois de configurar as 
 npm start
 ```
 
-Abra a lista, escolha um presente, selecione online e confirme. O checkout deve abrir no Mercado Pago.
+Abra a lista, escolha um presente, selecione online e confirme. O Checkout Pro deve abrir no Mercado Pago com os meios de pagamento disponíveis na sua conta.
