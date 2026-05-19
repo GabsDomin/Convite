@@ -30,7 +30,7 @@ const supabaseKey = firstEnv(
   "PUBLIC_SUPABASE_ANON_KEY",
 );
 const infinityPayCardUrl = process.env.INFINITY_PAY_CARD_URL || "";
-const infinitePayHandle = firstEnv("INFINITEPAY_HANDLE", "INFINITYPAY_HANDLE");
+const infinitePayHandle = firstEnv("INFINITEPAY_HANDLE", "INFINITYPAY_HANDLE") || "gabriel-domingues-0p8";
 const frontendUrl = firstEnv("FRONTEND_URL", "PUBLIC_FRONTEND_URL");
 const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL");
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
