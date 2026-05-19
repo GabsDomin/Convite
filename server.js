@@ -6,8 +6,29 @@ import { fileURLToPath } from "node:url";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(__dirname);
 const port = Number(process.env.PORT || 3000);
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+
+function firstEnv(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+
+  return "";
+}
+
+const supabaseUrl = firstEnv(
+  "SUPABASE_URL",
+  "VITE_SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "PUBLIC_SUPABASE_URL",
+);
+const supabaseKey = firstEnv(
+  "SUPABASE_ANON_KEY",
+  "SUPABASE_KEY",
+  "VITE_SUPABASE_ANON_KEY",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  "PUBLIC_SUPABASE_ANON_KEY",
+);
 const infinityPayCardUrl = process.env.INFINITY_PAY_CARD_URL || "";
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 
@@ -72,6 +93,33 @@ async function callSupabaseRpc(functionName, payload = {}) {
   return data;
 }
 
+async function readSupabaseTable(path) {
+  const endpoint = new URL(`/rest/v1/${path}`, supabaseUrl);
+  const supabaseResponse = await fetch(endpoint, {
+    headers: {
+      "apikey": supabaseKey,
+      "Authorization": `Bearer ${supabaseKey}`,
+    },
+  });
+  const responseText = await supabaseResponse.text();
+  const data = responseText ? JSON.parse(responseText) : null;
+
+  if (!supabaseResponse.ok) {
+    const message = data?.message || data?.error_description || data?.hint || "Erro ao ler o Supabase.";
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+async function getPublicGifts() {
+  try {
+    return await callSupabaseRpc("get_public_gifts");
+  } catch (error) {
+    return readSupabaseTable("gifts?select=id,name,gift_type,section,category,description,value,goal,quota_options,status,sort_order&status=neq.hidden&order=sort_order.asc,name.asc");
+  }
+}
+
 function normalizeGift(gift) {
   const quotaOptions = Array.isArray(gift.quota_options)
     ? gift.quota_options
@@ -96,19 +144,20 @@ async function handleApi(request, response, pathname) {
     sendJson(response, 200, {
       supabaseUrl: supabaseUrl || "",
       supabaseAnonKey: supabaseKey || "",
+      supabaseConfigured: hasSupabaseConfig,
       infinityPayCardUrl,
     });
     return true;
   }
 
   if (!hasSupabaseConfig) {
-    sendJson(response, 503, { error: "Supabase não está configurado no Railway." });
+    sendJson(response, 503, { error: "Supabase nao esta configurado no servidor." });
     return true;
   }
 
   try {
     if (request.method === "GET" && pathname === "/api/gifts") {
-      const gifts = await callSupabaseRpc("get_public_gifts");
+      const gifts = await getPublicGifts();
       sendJson(response, 200, { gifts: gifts.map(normalizeGift) });
       return true;
     }

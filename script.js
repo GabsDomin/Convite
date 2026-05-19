@@ -12,6 +12,8 @@ let audioStarted = false;
 let audioBlocked = false;
 let paymentConfig = null;
 let paymentConfigPromise = null;
+const localGiftFallbackHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+const useLocalGiftFallback = localGiftFallbackHosts.has(window.location.hostname);
 
 let gifts = [
   { id: "panos-prato", type: "fixed", section: "daily", name: "Kit de panos de prato", value: 35, category: "Cozinha", text: "Para deixar nossa cozinha mais prática no dia a dia.", status: "available" },
@@ -281,15 +283,37 @@ function renderGifts() {
     .join("");
 }
 
+function renderGiftMessage(title, text) {
+  if (!giftFilters || !giftGrid) return;
+
+  giftFilters.innerHTML = "";
+  giftGrid.innerHTML = `
+    <div class="gift-message">
+      <h3>${title}</h3>
+      <p>${text}</p>
+    </div>
+  `;
+}
+
 async function loadGifts() {
   try {
     const payload = await requestJson("/api/gifts");
     if (Array.isArray(payload.gifts) && payload.gifts.length) {
       gifts = payload.gifts.map(normalizeGiftForUi);
       renderGifts();
+      return;
+    }
+
+    if (!useLocalGiftFallback) {
+      renderGiftMessage("Lista indisponivel", "Nao encontramos presentes cadastrados no Supabase agora.");
     }
   } catch (error) {
-    renderGifts();
+    if (useLocalGiftFallback) {
+      renderGifts();
+      return;
+    }
+
+    renderGiftMessage("Lista indisponivel", "Nao foi possivel carregar os presentes do Supabase. Tente novamente em alguns instantes.");
   }
 }
 
@@ -576,7 +600,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 updateCountdown();
-renderGifts();
+if (useLocalGiftFallback) {
+  renderGifts();
+} else {
+  renderGiftMessage("Carregando lista...", "Buscando os presentes cadastrados no Supabase.");
+}
 renderRsvpState();
 syncMusicButton();
 

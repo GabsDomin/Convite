@@ -366,6 +366,27 @@ svg {
   gap: 3.25rem;
 }
 
+.gift-message {
+  width: min(100%, 42rem);
+  margin: 0 auto;
+  border: 1px solid rgba(0, 63, 152, 0.16);
+  border-radius: 8px;
+  padding: 2rem;
+  background: rgba(255, 255, 255, 0.78);
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.gift-message h3 {
+  margin-bottom: 0.7rem;
+}
+
+.gift-message p {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .gift-section > h3 {
   margin: 0 0 1.25rem;
   color: var(--royal-dark);
