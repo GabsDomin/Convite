@@ -122,8 +122,7 @@ as $$
           from public.payment_orders po
           where po.gift_id = g.id
             and po.gift_type = 'fixed'
-            and po.status in ('pending', 'approved', 'paid')
-            and (po.status in ('approved', 'paid') or po.expires_at > now())
+            and po.status in ('approved', 'paid')
         )
       ) then 'reserved'
       else g.status
@@ -191,8 +190,7 @@ begin
       from public.payment_orders po
       where po.gift_id = selected_gift.id
         and po.gift_type = 'fixed'
-        and po.status in ('pending', 'approved', 'paid')
-        and (po.status in ('approved', 'paid') or po.expires_at > now())
+        and po.status in ('approved', 'paid')
     ) then
       raise exception 'Esse presente já foi escolhido';
     end if;
