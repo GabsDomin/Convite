@@ -30,7 +30,11 @@ const supabaseKey = firstEnv(
   "PUBLIC_SUPABASE_ANON_KEY",
 );
 const infinityPayCardUrl = process.env.INFINITY_PAY_CARD_URL || "";
+const infinitePayHandle = firstEnv("INFINITEPAY_HANDLE", "INFINITYPAY_HANDLE");
+const frontendUrl = firstEnv("FRONTEND_URL", "PUBLIC_FRONTEND_URL");
+const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL");
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
+const hasInfinitePayConfig = Boolean(infinitePayHandle);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -62,6 +66,20 @@ function sendJson(response, statusCode, payload) {
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(payload));
+}
+
+function getRequestOrigin(request) {
+  const host = request.headers.host || `localhost:${port}`;
+  const protocol = request.headers["x-forwarded-proto"] || (host.includes("localhost") ? "http" : "https");
+  return `${protocol}://${host}`;
+}
+
+function getPublicFrontendUrl(request) {
+  return frontendUrl || getRequestOrigin(request);
+}
+
+function getPublicBackendUrl(request) {
+  return backendUrl || getRequestOrigin(request);
 }
 
 async function readJsonBody(request) {
@@ -112,6 +130,50 @@ async function readSupabaseTable(path) {
   return data;
 }
 
+async function createInfinitePayCheckout(order, request) {
+  if (!hasInfinitePayConfig) {
+    throw new Error("Pagamento por cartao ainda nao esta configurado.");
+  }
+
+  const amountInCents = Math.round(Number(order.amount) * 100);
+  const checkoutResponse = await fetch("https://api.checkout.infinitepay.io/links", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      handle: infinitePayHandle,
+      items: [
+        {
+          quantity: 1,
+          price: amountInCents,
+          description: order.gift_name,
+        },
+      ],
+      order_nsu: String(order.id),
+      redirect_url: `${getPublicFrontendUrl(request)}/pagamento/sucesso`,
+      webhook_url: `${getPublicBackendUrl(request)}/api/webhooks/infinitepay`,
+    }),
+  });
+  const responseText = await checkoutResponse.text();
+  const data = responseText ? JSON.parse(responseText) : {};
+
+  if (!checkoutResponse.ok) {
+    await callSupabaseRpc("mark_infinitepay_order_error", {
+      p_order_nsu: String(order.id),
+      p_payload: data,
+    }).catch(() => {});
+
+    const message = data?.message || data?.error || "Erro ao criar link de pagamento na InfinitePay.";
+    throw new Error(message);
+  }
+
+  const checkoutUrl = data.url || data.checkout_url || data.checkoutUrl || data.link;
+  if (!checkoutUrl) {
+    throw new Error("A InfinitePay nao retornou o link de pagamento.");
+  }
+
+  return checkoutUrl;
+}
+
 async function getPublicGifts() {
   try {
     return await callSupabaseRpc("get_public_gifts");
@@ -150,6 +212,7 @@ async function handleApi(request, response, pathname) {
       supabaseAnonKey: supabaseKey || "",
       supabaseConfigured: hasSupabaseConfig,
       infinityPayCardUrl,
+      infinitePayConfigured: hasInfinitePayConfig,
     });
     return true;
   }
@@ -187,6 +250,44 @@ async function handleApi(request, response, pathname) {
       return true;
     }
 
+    const checkoutMatch = pathname.match(/^\/api\/presentes\/([^/]+)\/checkout-infinitepay$/);
+    if (request.method === "POST" && checkoutMatch) {
+      if (!hasInfinitePayConfig) {
+        throw new Error("Pagamento por cartao ainda nao esta configurado.");
+      }
+
+      const body = await readJsonBody(request);
+      const order = await callSupabaseRpc("create_infinitepay_order", {
+        p_gift_id: decodeURIComponent(checkoutMatch[1]),
+        p_guest_name: body.guestName,
+        p_amount: body.amount ?? null,
+      });
+      if (!order?.[0]) {
+        throw new Error("Nao foi possivel criar o pedido de pagamento.");
+      }
+
+      const checkoutUrl = await createInfinitePayCheckout(order[0], request);
+      sendJson(response, 200, { checkoutUrl });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/webhooks/infinitepay") {
+      const body = await readJsonBody(request);
+      await callSupabaseRpc("confirm_infinitepay_payment", {
+        p_order_nsu: body.order_nsu,
+        p_transaction_nsu: body.transaction_nsu ?? null,
+        p_receipt_url: body.receipt_url ?? null,
+        p_amount: body.amount ?? null,
+        p_paid_amount: body.paid_amount ?? null,
+        p_installments: body.installments ?? null,
+        p_capture_method: body.capture_method ?? null,
+        p_invoice_slug: body.invoice_slug ?? null,
+        p_payload: body,
+      });
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
+
     return false;
   } catch (error) {
     sendJson(response, 400, { error: error.message || "Erro ao processar solicitação." });
@@ -202,7 +303,9 @@ createServer(async (request, response) => {
     if (handled) return;
   }
 
-  const filePath = resolveRequestPath(request.url || "/");
+  const filePath = pathname === "/pagamento/sucesso"
+    ? resolve(join(root, "pagamento", "sucesso", "index.html"))
+    : resolveRequestPath(request.url || "/");
 
   if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

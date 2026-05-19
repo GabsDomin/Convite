@@ -124,6 +124,10 @@ function getCardPaymentUrl() {
   return paymentConfig?.infinityPayCardUrl || "";
 }
 
+function hasCardPaymentConfigured() {
+  return Boolean(paymentConfig?.infinitePayConfigured || getCardPaymentUrl());
+}
+
 function paymentMethodIcon(kind) {
   if (kind === "card") {
     return `
@@ -427,7 +431,7 @@ function openRsvpModal() {
 
 function openGiftModal(gift) {
   const isQuota = gift.type === "quota";
-  const hasCardPayment = Boolean(getCardPaymentUrl());
+  const hasCardPayment = hasCardPaymentConfigured();
 
   openModal(`
     <div class="modal-icon">${giftIcon()}</div>
@@ -458,9 +462,10 @@ function openGiftModal(gift) {
         <button class="payment-method" type="button" data-payment-method="card" aria-pressed="false" ${hasCardPayment ? "" : "disabled"}>
           <span>${paymentMethodIcon("card")}</span>
           <strong>Cartão de crédito</strong>
-          <small>${hasCardPayment ? "Pagar pelo Infinity Pay" : "Em breve pelo Infinity Pay"}</small>
+          <small>${hasCardPayment ? "Pagamento seguro via InfinitePay" : "Em breve pela InfinitePay"}</small>
         </button>
       </div>
+      <p class="payment-note">No cartão, você será direcionado para uma página segura da InfinitePay.</p>
       <div class="modal-actions">
         <button class="button secondary" type="button" data-close-modal>Cancelar</button>
         <button class="button primary" type="submit">Confirmar</button>
@@ -555,12 +560,34 @@ document.addEventListener("submit", async (event) => {
     const paymentMethod = String(formData.get("paymentMethod") || "pix") === "card" ? "card" : "pix";
     const cardPaymentUrl = getCardPaymentUrl();
 
-    if (paymentMethod === "card" && !cardPaymentUrl) {
-      showError("O pagamento por cartÃ£o ainda nÃ£o estÃ¡ configurado. Por enquanto, escolha Pix.");
+    if (paymentMethod === "card" && !hasCardPaymentConfigured()) {
+      showError("O pagamento por cartão ainda não está configurado. Por enquanto, escolha Pix.");
       return;
     }
 
     try {
+      if (paymentMethod === "card") {
+        if (cardPaymentUrl) {
+          window.location.href = cardPaymentUrl;
+          return;
+        }
+
+        const checkout = await requestJson(`/api/presentes/${encodeURIComponent(gift?.id || "")}/checkout-infinitepay`, {
+          method: "POST",
+          body: JSON.stringify({
+            guestName,
+            amount: gift?.type === "quota" ? quotaValue : undefined,
+          }),
+        });
+
+        if (!checkout.checkoutUrl) {
+          throw new Error("Não foi possível iniciar o pagamento por cartão.");
+        }
+
+        window.location.href = checkout.checkoutUrl;
+        return;
+      }
+
       await requestJson("/api/gifts/reserve", {
         method: "POST",
         body: JSON.stringify({
@@ -573,11 +600,6 @@ document.addEventListener("submit", async (event) => {
       if (gift && gift.type === "fixed") {
         gift.status = "reserved";
         renderGifts();
-      }
-
-      if (paymentMethod === "card") {
-        window.location.href = cardPaymentUrl;
-        return;
       }
 
       showSuccess(gift?.type === "quota" ? "Sua contribuição foi registrada para os noivos." : "Seu presente foi registrado para os noivos.");

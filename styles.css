@@ -592,6 +592,14 @@ svg {
   line-height: 1.35;
 }
 
+.payment-note {
+  margin: 0.85rem 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .music-toggle {
   position: fixed;
   right: 1rem;
