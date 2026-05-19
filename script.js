@@ -124,12 +124,12 @@ function getCardPaymentUrl() {
   return "";
 }
 
-function hasCardPaymentConfigured() {
+function hasOnlinePaymentConfigured() {
   return Boolean(paymentConfig?.mercadoPagoConfigured);
 }
 
 function paymentMethodIcon(kind) {
-  if (kind === "card") {
+  if (kind === "online") {
     return `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 7h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
@@ -431,7 +431,7 @@ function openRsvpModal() {
 
 function openGiftModal(gift) {
   const isQuota = gift.type === "quota";
-  const hasCardPayment = hasCardPaymentConfigured();
+  const hasOnlinePayment = hasOnlinePaymentConfigured();
 
   openModal(`
     <div class="modal-icon">${giftIcon()}</div>
@@ -460,20 +460,20 @@ function openGiftModal(gift) {
       ` : `
         <p class="modal-value">Valor do presente: <strong>${formatCurrency(gift.value)}</strong></p>
       `}
-      <input type="hidden" name="paymentMethod" value="pix" />
-      <div class="payment-methods" aria-label="Formas de pagamento">
-        <button class="payment-method selected" type="button" data-payment-method="pix" aria-pressed="true">
-          <span>${paymentMethodIcon("pix")}</span>
-          <strong>Pix</strong>
-          <small>Confirmar e seguir com o Pix</small>
+      <input type="hidden" name="paymentMethod" value="in_person" />
+      <div class="payment-methods" aria-label="Como deseja presentear">
+        <button class="payment-method selected" type="button" data-payment-method="in_person" aria-pressed="true">
+          <span>${paymentMethodIcon("in_person")}</span>
+          <strong>Pessoalmente</strong>
+          <small>Registrar presente e combinar direto com os noivos</small>
         </button>
-        <button class="payment-method" type="button" data-payment-method="card" aria-pressed="false" ${hasCardPayment ? "" : "disabled"}>
-          <span>${paymentMethodIcon("card")}</span>
-          <strong>Cartão de crédito</strong>
-          <small>${hasCardPayment ? "Checkout seguro Mercado Pago" : "Mercado Pago em configuração"}</small>
+        <button class="payment-method" type="button" data-payment-method="online" aria-pressed="false" ${hasOnlinePayment ? "" : "disabled"}>
+          <span>${paymentMethodIcon("online")}</span>
+          <strong>Online</strong>
+          <small>${hasOnlinePayment ? "Pagar com segurança pelo Mercado Pago" : "Pagamento online em configuração"}</small>
         </button>
       </div>
-      <p class="payment-note">No cartão, você será direcionado para uma página segura do Mercado Pago.</p>
+      <p class="payment-note">No online, você será direcionado para uma página segura do Mercado Pago.</p>
       <div class="modal-actions">
         <button class="button secondary" type="button" data-close-modal>Cancelar</button>
         <button class="button primary" type="submit">Confirmar</button>
@@ -567,15 +567,15 @@ document.addEventListener("submit", async (event) => {
     const buyerEmail = String(formData.get("buyerEmail") || "");
     const message = String(formData.get("message") || "");
     const quotaValue = Number(formData.get("quotaValue") || 0);
-    const paymentMethod = String(formData.get("paymentMethod") || "pix") === "card" ? "card" : "pix";
+    const paymentMethod = String(formData.get("paymentMethod") || "in_person") === "online" ? "online" : "in_person";
 
-    if (paymentMethod === "card" && !hasCardPaymentConfigured()) {
-      showError("O pagamento por cartão ainda não está configurado. Por enquanto, escolha Pix.");
+    if (paymentMethod === "online" && !hasOnlinePaymentConfigured()) {
+      showError("O pagamento online ainda não está configurado. Por enquanto, escolha pessoalmente.");
       return;
     }
 
     try {
-      if (paymentMethod === "card") {
+      if (paymentMethod === "online") {
         const checkout = await requestJson("/api/mercadopago/create-preference", {
           method: "POST",
           body: JSON.stringify({
@@ -589,7 +589,7 @@ document.addEventListener("submit", async (event) => {
         });
 
         if (!checkout.init_point) {
-          throw new Error("Não foi possível iniciar o pagamento por cartão.");
+          throw new Error("Não foi possível iniciar o pagamento online.");
         }
 
         window.location.href = checkout.init_point;

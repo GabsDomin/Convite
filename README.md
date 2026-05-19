@@ -1,6 +1,6 @@
 # Convite Gabriel & Halanaia
 
-Site de convite com confirmação de presença, lista de presentes via Supabase e pagamento por cartão com Mercado Pago Checkout Pro.
+Site de convite com confirmação de presença, lista de presentes via Supabase e pagamento online com Mercado Pago Checkout Pro.
 
 ## Variáveis de ambiente
 
@@ -75,4 +75,4 @@ Use credenciais sandbox/teste do Mercado Pago primeiro. Depois de configurar as 
 npm start
 ```
 
-Abra a lista, escolha um presente, selecione cartão e confirme. O checkout deve abrir no Mercado Pago.
+Abra a lista, escolha um presente, selecione online e confirme. O checkout deve abrir no Mercado Pago.
