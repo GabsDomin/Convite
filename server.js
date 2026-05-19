@@ -114,7 +114,7 @@ async function readSupabaseTable(path) {
 
 async function getPublicGifts() {
   try {
-    return readSupabaseTable("gifts?select=id,name,gift_type,section,category,description,value,goal,quota_options,status,sort_order&status=neq.hidden&order=sort_order.asc,name.asc");
+    return await readSupabaseTable("gifts?select=id,name,gift_type,section,category,description,value,goal,quota_options,status,sort_order&status=neq.hidden&order=sort_order.asc,name.asc");
   } catch (tableError) {
     try {
       return await callSupabaseRpc("get_public_gifts");
