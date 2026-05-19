@@ -733,14 +733,31 @@ svg {
 }
 
 .modal input,
-.modal select {
+.modal select,
+.modal textarea {
   width: 100%;
-  min-height: 3rem;
   border: 1px solid rgba(111, 134, 184, 0.38);
   border-radius: 8px;
   padding: 0.75rem 0.9rem;
   color: var(--ink);
   background: white;
+  font: inherit;
+}
+
+.modal input,
+.modal select {
+  min-height: 3rem;
+}
+
+.modal textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.optional-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .modal-actions {

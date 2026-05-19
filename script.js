@@ -121,11 +121,11 @@ async function loadPaymentConfig() {
 }
 
 function getCardPaymentUrl() {
-  return paymentConfig?.infinityPayCardUrl || "";
+  return "";
 }
 
 function hasCardPaymentConfigured() {
-  return Boolean(paymentConfig?.infinitePayConfigured || getCardPaymentUrl());
+  return Boolean(paymentConfig?.mercadoPagoConfigured);
 }
 
 function paymentMethodIcon(kind) {
@@ -442,6 +442,14 @@ function openGiftModal(gift) {
         Seu nome
         <input name="guestName" required autocomplete="name" placeholder="Digite seu nome" />
       </label>
+      <label>
+        Seu e-mail
+        <input name="buyerEmail" type="email" required autocomplete="email" placeholder="seu@email.com" />
+      </label>
+      <label>
+        Mensagem para os noivos <span class="optional-label">opcional</span>
+        <textarea name="message" rows="3" placeholder="Escreva uma mensagem com carinho"></textarea>
+      </label>
       ${isQuota ? `
         <label>
           Valor da cota
@@ -462,10 +470,10 @@ function openGiftModal(gift) {
         <button class="payment-method" type="button" data-payment-method="card" aria-pressed="false" ${hasCardPayment ? "" : "disabled"}>
           <span>${paymentMethodIcon("card")}</span>
           <strong>Cartão de crédito</strong>
-          <small>${hasCardPayment ? "Pagamento seguro via InfinitePay" : "Em breve pela InfinitePay"}</small>
+          <small>${hasCardPayment ? "Checkout seguro Mercado Pago" : "Mercado Pago em configuração"}</small>
         </button>
       </div>
-      <p class="payment-note">No cartão, você será direcionado para uma página segura da InfinitePay.</p>
+      <p class="payment-note">No cartão, você será direcionado para uma página segura do Mercado Pago.</p>
       <div class="modal-actions">
         <button class="button secondary" type="button" data-close-modal>Cancelar</button>
         <button class="button primary" type="submit">Confirmar</button>
@@ -556,9 +564,10 @@ document.addEventListener("submit", async (event) => {
     const formData = new FormData(giftForm);
     const gift = gifts.find((item) => item.id === giftForm.dataset.giftForm);
     const guestName = String(formData.get("guestName") || "");
+    const buyerEmail = String(formData.get("buyerEmail") || "");
+    const message = String(formData.get("message") || "");
     const quotaValue = Number(formData.get("quotaValue") || 0);
     const paymentMethod = String(formData.get("paymentMethod") || "pix") === "card" ? "card" : "pix";
-    const cardPaymentUrl = getCardPaymentUrl();
 
     if (paymentMethod === "card" && !hasCardPaymentConfigured()) {
       showError("O pagamento por cartão ainda não está configurado. Por enquanto, escolha Pix.");
@@ -567,24 +576,23 @@ document.addEventListener("submit", async (event) => {
 
     try {
       if (paymentMethod === "card") {
-        if (cardPaymentUrl) {
-          window.location.href = cardPaymentUrl;
-          return;
-        }
-
-        const checkout = await requestJson(`/api/presentes/${encodeURIComponent(gift?.id || "")}/checkout-infinitepay`, {
+        const checkout = await requestJson("/api/mercadopago/create-preference", {
           method: "POST",
           body: JSON.stringify({
-            guestName,
-            amount: gift?.type === "quota" ? quotaValue : undefined,
+            giftId: gift?.id,
+            giftName: gift?.name,
+            amount: gift?.type === "quota" ? quotaValue : gift?.value,
+            buyerName: guestName,
+            buyerEmail,
+            message,
           }),
         });
 
-        if (!checkout.checkoutUrl) {
+        if (!checkout.init_point) {
           throw new Error("Não foi possível iniciar o pagamento por cartão.");
         }
 
-        window.location.href = checkout.checkoutUrl;
+        window.location.href = checkout.init_point;
         return;
       }
 

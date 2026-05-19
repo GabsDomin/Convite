@@ -1,4 +1,5 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,12 +30,13 @@ const supabaseKey = firstEnv(
   "NEXT_PUBLIC_SUPABASE_ANON_KEY",
   "PUBLIC_SUPABASE_ANON_KEY",
 );
-const infinityPayCardUrl = process.env.INFINITY_PAY_CARD_URL || "";
-const infinitePayHandle = firstEnv("INFINITEPAY_HANDLE", "INFINITYPAY_HANDLE") || "gabriel-domingues-0p8";
-const frontendUrl = firstEnv("FRONTEND_URL", "PUBLIC_FRONTEND_URL");
-const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL");
+const mercadoPagoAccessToken = firstEnv("MERCADO_PAGO_ACCESS_TOKEN", "MP_ACCESS_TOKEN");
+const mercadoPagoPublicKey = firstEnv("NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY", "MERCADO_PAGO_PUBLIC_KEY");
+const mercadoPagoWebhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET || "";
+const siteUrl = firstEnv("SITE_URL", "FRONTEND_URL", "PUBLIC_FRONTEND_URL");
+const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL");
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
-const hasInfinitePayConfig = Boolean(infinitePayHandle);
+const hasMercadoPagoConfig = Boolean(mercadoPagoAccessToken);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -75,7 +77,7 @@ function getRequestOrigin(request) {
 }
 
 function getPublicFrontendUrl(request) {
-  return frontendUrl || getRequestOrigin(request);
+  return siteUrl || getRequestOrigin(request);
 }
 
 function getPublicBackendUrl(request) {
@@ -130,48 +132,135 @@ async function readSupabaseTable(path) {
   return data;
 }
 
-async function createInfinitePayCheckout(order, request) {
-  if (!hasInfinitePayConfig) {
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+function normalizeMercadoPagoStatus(status) {
+  if (status === "approved") return "approved";
+  if (["pending", "in_process", "in_mediation"].includes(status)) return "pending";
+  if (status === "rejected") return "rejected";
+  if (["cancelled", "refunded", "charged_back"].includes(status)) return "cancelled";
+  return "pending";
+}
+
+function parseMercadoPagoSignature(headerValue) {
+  return String(headerValue || "")
+    .split(",")
+    .map((part) => part.trim().split("="))
+    .reduce((parts, [key, value]) => {
+      if (key && value) parts[key] = value;
+      return parts;
+    }, {});
+}
+
+function validateMercadoPagoWebhookSignature(request, body) {
+  if (!mercadoPagoWebhookSecret) return;
+
+  const signature = parseMercadoPagoSignature(request.headers["x-signature"]);
+  const requestId = request.headers["x-request-id"];
+  const notificationUrl = new URL(request.url || "/", `http://localhost:${port}`);
+  const dataId = notificationUrl.searchParams.get("data.id")
+    || notificationUrl.searchParams.get("id")
+    || body?.data?.id
+    || body?.id;
+
+  if (!signature.ts || !signature.v1 || !requestId || !dataId) {
+    throw new Error("Assinatura do webhook Mercado Pago ausente.");
+  }
+
+  const manifest = `id:${String(dataId).toLowerCase()};request-id:${requestId};ts:${signature.ts};`;
+  const expected = createHmac("sha256", mercadoPagoWebhookSecret)
+    .update(manifest)
+    .digest("hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const receivedBuffer = Buffer.from(signature.v1, "hex");
+
+  if (
+    expectedBuffer.length !== receivedBuffer.length
+    || !timingSafeEqual(expectedBuffer, receivedBuffer)
+  ) {
+    throw new Error("Assinatura do webhook Mercado Pago invalida.");
+  }
+}
+
+async function createMercadoPagoPreference(order, request) {
+  if (!hasMercadoPagoConfig) {
     throw new Error("Pagamento por cartao ainda nao esta configurado.");
   }
 
-  const amountInCents = Math.round(Number(order.amount) * 100);
-  const checkoutResponse = await fetch("https://api.checkout.infinitepay.io/links", {
+  const publicFrontendUrl = getPublicFrontendUrl(request);
+  const preferenceResponse = await fetch("https://api.mercadopago.com/checkout/preferences", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${mercadoPagoAccessToken}`,
+      "X-Idempotency-Key": String(order.id),
+    },
     body: JSON.stringify({
-      handle: infinitePayHandle,
       items: [
         {
+          id: order.gift_id,
+          title: order.gift_name,
           quantity: 1,
-          price: amountInCents,
-          description: order.gift_name,
+          unit_price: Number(order.amount),
+          currency_id: "BRL",
         },
       ],
-      order_nsu: String(order.id),
-      redirect_url: `${getPublicFrontendUrl(request)}/pagamento/sucesso`,
-      webhook_url: `${getPublicBackendUrl(request)}/api/webhooks/infinitepay`,
+      payer: {
+        name: order.buyer_name,
+        email: order.buyer_email,
+      },
+      back_urls: {
+        success: `${publicFrontendUrl}/pagamento/sucesso`,
+        failure: `${publicFrontendUrl}/pagamento/erro`,
+        pending: `${publicFrontendUrl}/pagamento/pendente`,
+      },
+      auto_return: "approved",
+      external_reference: String(order.id),
+      notification_url: `${getPublicBackendUrl(request)}/api/webhooks/mercadopago?source_news=webhooks`,
     }),
   });
-  const responseText = await checkoutResponse.text();
+  const responseText = await preferenceResponse.text();
   const data = responseText ? JSON.parse(responseText) : {};
 
-  if (!checkoutResponse.ok) {
-    await callSupabaseRpc("mark_infinitepay_order_error", {
-      p_order_nsu: String(order.id),
+  if (!preferenceResponse.ok) {
+    await callSupabaseRpc("mark_mercadopago_order_error", {
+      p_order_id: String(order.id),
       p_payload: data,
     }).catch(() => {});
 
-    const message = data?.message || data?.error || "Erro ao criar link de pagamento na InfinitePay.";
+    const message = data?.message || data?.error || "Erro ao criar preferencia no Mercado Pago.";
     throw new Error(message);
   }
 
-  const checkoutUrl = data.url || data.checkout_url || data.checkoutUrl || data.link;
-  if (!checkoutUrl) {
-    throw new Error("A InfinitePay nao retornou o link de pagamento.");
+  if (!data.init_point) {
+    throw new Error("O Mercado Pago nao retornou o link de pagamento.");
   }
 
-  return checkoutUrl;
+  await callSupabaseRpc("set_mercadopago_preference", {
+    p_order_id: String(order.id),
+    p_preference_id: data.id,
+  });
+
+  return data;
+}
+
+async function getMercadoPagoPayment(paymentId) {
+  const paymentResponse = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+    headers: {
+      "Authorization": `Bearer ${mercadoPagoAccessToken}`,
+    },
+  });
+  const responseText = await paymentResponse.text();
+  const data = responseText ? JSON.parse(responseText) : {};
+
+  if (!paymentResponse.ok) {
+    const message = data?.message || data?.error || "Erro ao consultar pagamento no Mercado Pago.";
+    throw new Error(message);
+  }
+
+  return data;
 }
 
 async function getPublicGifts() {
@@ -211,8 +300,8 @@ async function handleApi(request, response, pathname) {
       supabaseUrl: supabaseUrl || "",
       supabaseAnonKey: supabaseKey || "",
       supabaseConfigured: hasSupabaseConfig,
-      infinityPayCardUrl,
-      infinitePayConfigured: hasInfinitePayConfig,
+      mercadoPagoConfigured: hasMercadoPagoConfig,
+      mercadoPagoPublicKey,
     });
     return true;
   }
@@ -250,40 +339,61 @@ async function handleApi(request, response, pathname) {
       return true;
     }
 
-    const checkoutMatch = pathname.match(/^\/api\/presentes\/([^/]+)\/checkout-infinitepay$/);
-    if (request.method === "POST" && checkoutMatch) {
-      if (!hasInfinitePayConfig) {
+    if (request.method === "POST" && pathname === "/api/mercadopago/create-preference") {
+      if (!hasMercadoPagoConfig) {
         throw new Error("Pagamento por cartao ainda nao esta configurado.");
       }
 
       const body = await readJsonBody(request);
-      const order = await callSupabaseRpc("create_infinitepay_order", {
-        p_gift_id: decodeURIComponent(checkoutMatch[1]),
-        p_guest_name: body.guestName,
+      if (!body.giftId) throw new Error("Presente obrigatorio.");
+      if (!body.giftName) throw new Error("Nome do presente obrigatorio.");
+      if (!Number(body.amount) || Number(body.amount) <= 0) throw new Error("Valor invalido.");
+      if (!body.buyerName) throw new Error("Nome obrigatorio.");
+      if (!isValidEmail(body.buyerEmail)) throw new Error("E-mail invalido.");
+
+      const order = await callSupabaseRpc("create_mercadopago_order", {
+        p_gift_id: body.giftId,
+        p_buyer_name: body.buyerName,
+        p_buyer_email: body.buyerEmail,
+        p_message: body.message || null,
         p_amount: body.amount ?? null,
       });
       if (!order?.[0]) {
         throw new Error("Nao foi possivel criar o pedido de pagamento.");
       }
 
-      const checkoutUrl = await createInfinitePayCheckout(order[0], request);
-      sendJson(response, 200, { checkoutUrl });
+      const preference = await createMercadoPagoPreference(order[0], request);
+      sendJson(response, 200, {
+        preferenceId: preference.id,
+        init_point: preference.init_point,
+        sandbox_init_point: preference.sandbox_init_point,
+      });
       return true;
     }
 
-    if (request.method === "POST" && pathname === "/api/webhooks/infinitepay") {
+    if (request.method === "POST" && pathname === "/api/webhooks/mercadopago") {
       const body = await readJsonBody(request);
-      await callSupabaseRpc("confirm_infinitepay_payment", {
-        p_order_nsu: body.order_nsu,
-        p_transaction_nsu: body.transaction_nsu ?? null,
-        p_receipt_url: body.receipt_url ?? null,
-        p_amount: body.amount ?? null,
-        p_paid_amount: body.paid_amount ?? null,
-        p_installments: body.installments ?? null,
-        p_capture_method: body.capture_method ?? null,
-        p_invoice_slug: body.invoice_slug ?? null,
-        p_payload: body,
-      });
+      validateMercadoPagoWebhookSignature(request, body);
+
+      const paymentId = body?.data?.id || body?.id || new URL(request.url || "/", `http://localhost:${port}`).searchParams.get("data.id");
+      if (paymentId) {
+        const payment = await getMercadoPagoPayment(paymentId);
+        const status = normalizeMercadoPagoStatus(payment.status);
+
+        if (payment.external_reference) {
+          await callSupabaseRpc("confirm_mercadopago_payment", {
+            p_order_id: payment.external_reference,
+            p_payment_id: String(payment.id),
+            p_status: status,
+            p_amount: payment.transaction_amount ?? null,
+            p_payment_method_id: payment.payment_method_id ?? null,
+            p_date_approved: payment.date_approved ?? null,
+            p_payer_email: payment.payer?.email ?? null,
+            p_payload: payment,
+          });
+        }
+      }
+
       sendJson(response, 200, { ok: true });
       return true;
     }
@@ -303,8 +413,11 @@ createServer(async (request, response) => {
     if (handled) return;
   }
 
-  const filePath = pathname === "/pagamento/sucesso"
-    ? resolve(join(root, "pagamento", "sucesso", "index.html"))
+  const paymentPage = ["/pagamento/sucesso", "/pagamento/erro", "/pagamento/pendente"].includes(pathname)
+    ? resolve(join(root, pathname.replace(/^\/+/, ""), "index.html"))
+    : null;
+  const filePath = paymentPage
+    ? paymentPage
     : resolveRequestPath(request.url || "/");
 
   if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
