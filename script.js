@@ -465,15 +465,15 @@ function openGiftModal(gift) {
         <button class="payment-method selected" type="button" data-payment-method="in_person" aria-pressed="true">
           <span>${paymentMethodIcon("in_person")}</span>
           <strong>Pessoalmente</strong>
-          <small>Registrar presente e combinar direto com os noivos</small>
+          <small>Combinar com os noivos e pagar por Pix, cartão ou como preferir</small>
         </button>
         <button class="payment-method" type="button" data-payment-method="online" aria-pressed="false" ${hasOnlinePayment ? "" : "disabled"}>
           <span>${paymentMethodIcon("online")}</span>
           <strong>Online</strong>
-          <small>${hasOnlinePayment ? "Pagar com segurança pelo Mercado Pago" : "Pagamento online em configuração"}</small>
+          <small>${hasOnlinePayment ? "Pagar agora pelo Mercado Pago com Pix, cartão ou outros meios" : "Pagamento online em configuração"}</small>
         </button>
       </div>
-      <p class="payment-note">No online, você será direcionado para uma página segura do Mercado Pago.</p>
+      <p class="payment-note">Nas duas opções você pode usar Pix ou cartão. No online, o pagamento acontece em uma página segura do Mercado Pago.</p>
       <div class="modal-actions">
         <button class="button secondary" type="button" data-close-modal>Cancelar</button>
         <button class="button primary" type="submit">Confirmar</button>
