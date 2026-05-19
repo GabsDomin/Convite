@@ -133,7 +133,8 @@ async function readSupabaseTable(path) {
 }
 
 function isValidEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+  const email = String(value || "").trim();
+  return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function normalizeMercadoPagoStatus(status) {
@@ -209,7 +210,7 @@ async function createMercadoPagoPreference(order, request) {
       ],
       payer: {
         name: order.buyer_name,
-        email: order.buyer_email,
+        ...(order.buyer_email ? { email: order.buyer_email } : {}),
       },
       back_urls: {
         success: `${publicFrontendUrl}/pagamento/sucesso`,
@@ -354,7 +355,7 @@ async function handleApi(request, response, pathname) {
       const order = await callSupabaseRpc("create_mercadopago_order", {
         p_gift_id: body.giftId,
         p_buyer_name: body.buyerName,
-        p_buyer_email: body.buyerEmail,
+        p_buyer_email: body.buyerEmail || null,
         p_message: body.message || null,
         p_amount: body.amount ?? null,
       });

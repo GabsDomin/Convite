@@ -166,7 +166,7 @@ begin
     raise exception 'Nome obrigatório';
   end if;
 
-  if clean_email = '' or clean_email !~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$' then
+  if clean_email <> '' and clean_email !~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$' then
     raise exception 'E-mail inválido';
   end if;
 
@@ -219,7 +219,7 @@ begin
   values (
     selected_gift.id,
     clean_name,
-    clean_email,
+    nullif(clean_email, ''),
     nullif(trim(coalesce(p_message, '')), ''),
     selected_gift.name,
     selected_gift.gift_type,

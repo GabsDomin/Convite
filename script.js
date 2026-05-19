@@ -443,8 +443,8 @@ function openGiftModal(gift) {
         <input name="guestName" required autocomplete="name" placeholder="Digite seu nome" />
       </label>
       <label>
-        Seu e-mail
-        <input name="buyerEmail" type="email" required autocomplete="email" placeholder="seu@email.com" />
+        Seu e-mail <span class="optional-label">opcional</span>
+        <input name="buyerEmail" type="email" autocomplete="email" placeholder="seu@email.com" />
       </label>
       <label>
         Mensagem para os noivos <span class="optional-label">opcional</span>
