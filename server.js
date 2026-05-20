@@ -191,6 +191,9 @@ async function createMercadoPagoPreference(order, request) {
   }
 
   const publicFrontendUrl = getPublicFrontendUrl(request);
+  const payer = order.buyer_email
+    ? { name: order.buyer_name, email: order.buyer_email }
+    : undefined;
   const preferenceResponse = await fetch("https://api.mercadopago.com/checkout/preferences", {
     method: "POST",
     headers: {
@@ -208,10 +211,7 @@ async function createMercadoPagoPreference(order, request) {
           currency_id: "BRL",
         },
       ],
-      payer: {
-        name: order.buyer_name,
-        ...(order.buyer_email ? { email: order.buyer_email } : {}),
-      },
+      ...(payer ? { payer } : {}),
       back_urls: {
         success: `${publicFrontendUrl}/pagamento/sucesso`,
         failure: `${publicFrontendUrl}/pagamento/erro`,
