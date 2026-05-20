@@ -12,6 +12,9 @@ let audioStarted = false;
 let audioBlocked = false;
 let paymentConfig = null;
 let paymentConfigPromise = null;
+let giftLoadPromise = null;
+let lastGiftRenderSignature = "";
+let lastGiftLoadAt = 0;
 const localGiftFallbackHosts = new Set(["localhost", "127.0.0.1", "::1"]);
 const useLocalGiftFallback = localGiftFallbackHosts.has(window.location.hostname);
 
@@ -263,6 +266,23 @@ function renderGifts() {
 
   const currentFilter = filters.find((filter) => filter.id === activeFilter) || filters[0];
   const filteredGifts = gifts.filter(currentFilter.match);
+  const renderSignature = JSON.stringify({
+    filter: activeFilter,
+    gifts: filteredGifts.map((gift) => [
+      gift.id,
+      gift.name,
+      gift.text,
+      gift.status,
+      gift.category,
+      gift.value,
+      gift.goal,
+      gift.contributed,
+      gift.options.join(","),
+    ]),
+  });
+
+  if (renderSignature === lastGiftRenderSignature) return;
+  lastGiftRenderSignature = renderSignature;
 
   giftFilters.innerHTML = filters
     .map((filter) => `
@@ -302,10 +322,14 @@ function renderGiftMessage(title, text) {
 }
 
 async function loadGifts() {
+  if (giftLoadPromise) return giftLoadPromise;
+
+  giftLoadPromise = (async () => {
   try {
     const payload = await requestJson("/api/gifts");
     if (Array.isArray(payload.gifts) && payload.gifts.length) {
       gifts = payload.gifts.map(normalizeGiftForUi);
+      lastGiftLoadAt = Date.now();
       renderGifts();
       return;
     }
@@ -320,6 +344,13 @@ async function loadGifts() {
     }
 
     renderGiftMessage("Lista indisponivel", error.message || "Nao foi possivel carregar os presentes do Supabase. Tente novamente em alguns instantes.");
+  }
+  })();
+
+  try {
+    return await giftLoadPromise;
+  } finally {
+    giftLoadPromise = null;
   }
 }
 
@@ -643,7 +674,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && modal.classList.contains("open")) closeModal();
 });
 
-["pointerdown", "touchstart", "keydown", "scroll"].forEach((eventName) => {
+["pointerdown", "touchstart", "keydown"].forEach((eventName) => {
   window.addEventListener(eventName, enableAudioAfterInteraction, { passive: true, once: false });
 });
 
@@ -663,5 +694,5 @@ window.addEventListener("load", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) loadGifts();
+  if (!document.hidden && Date.now() - lastGiftLoadAt > 120000) loadGifts();
 });
