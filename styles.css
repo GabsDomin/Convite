@@ -233,6 +233,11 @@ svg {
   color: inherit;
 }
 
+.desktop-date,
+.mobile-date {
+  white-space: nowrap;
+}
+
 .mobile-date {
   display: none;
 }
@@ -841,6 +846,14 @@ svg {
       );
     background-position: center top;
   }
+
+  .desktop-date {
+    display: none;
+  }
+
+  .mobile-date {
+    display: inline;
+  }
 }
 
 @media (max-width: 560px) {
@@ -926,14 +939,6 @@ svg {
 
   .details .info-card p {
     display: none;
-  }
-
-  .desktop-date {
-    display: none;
-  }
-
-  .mobile-date {
-    display: inline;
   }
 
   .hero-actions,
