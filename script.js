@@ -602,11 +602,13 @@ document.addEventListener("submit", async (event) => {
           }),
         });
 
-        if (!checkout.init_point) {
+        const checkoutUrl = checkout.checkoutUrl || checkout.init_point;
+
+        if (!checkoutUrl) {
           throw new Error("Não foi possível iniciar o pagamento online.");
         }
 
-        window.location.href = checkout.init_point;
+        window.location.href = checkoutUrl;
         return;
       }
 

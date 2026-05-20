@@ -49,10 +49,12 @@ https://convite-production.up.railway.app/api/webhooks/mercadopago
 ## Fluxo de pagamento
 
 1. O convidado escolhe um presente.
-2. Informa nome, e-mail e mensagem opcional.
+2. Informa nome e mensagem opcional.
 3. O backend cria uma intenção em `payment_orders`.
 4. O backend cria uma preferência no Mercado Pago.
-5. O frontend redireciona para `init_point`.
+5. O frontend redireciona para o link correto do ambiente:
+   - token `TEST-...`: `sandbox_init_point`
+   - token `APP_USR-...`: `init_point`
 6. O Mercado Pago chama o webhook.
 7. O webhook consulta `/v1/payments/:id` no Mercado Pago.
 8. Se o status for `approved`, o presente é reservado em `gift_reservations`.
@@ -76,3 +78,5 @@ npm start
 ```
 
 Abra a lista, escolha um presente, selecione online e confirme. O Checkout Pro deve abrir no Mercado Pago com os meios de pagamento disponíveis na sua conta.
+
+Para pagamentos reais, troque `MERCADO_PAGO_ACCESS_TOKEN` para uma credencial de produção (`APP_USR-...`) no Railway. Credenciais `TEST-...` abrem o checkout sandbox e não servem para receber pagamentos reais.

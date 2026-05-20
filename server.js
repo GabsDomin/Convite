@@ -37,6 +37,7 @@ const siteUrl = firstEnv("SITE_URL", "FRONTEND_URL", "PUBLIC_FRONTEND_URL");
 const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL");
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 const hasMercadoPagoConfig = Boolean(mercadoPagoAccessToken);
+const mercadoPagoMode = mercadoPagoAccessToken.startsWith("TEST-") ? "sandbox" : "production";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -239,6 +240,10 @@ async function createMercadoPagoPreference(order, request) {
     throw new Error("O Mercado Pago nao retornou o link de pagamento.");
   }
 
+  data.checkout_url = mercadoPagoMode === "sandbox" && data.sandbox_init_point
+    ? data.sandbox_init_point
+    : data.init_point;
+
   await callSupabaseRpc("set_mercadopago_preference", {
     p_order_id: String(order.id),
     p_preference_id: data.id,
@@ -304,6 +309,7 @@ async function handleApi(request, response, pathname) {
       supabaseConfigured: hasSupabaseConfig,
       mercadoPagoConfigured: hasMercadoPagoConfig,
       mercadoPagoPublicKey,
+      mercadoPagoMode: hasMercadoPagoConfig ? mercadoPagoMode : "",
     });
     return true;
   }
@@ -367,6 +373,8 @@ async function handleApi(request, response, pathname) {
       const preference = await createMercadoPagoPreference(order[0], request);
       sendJson(response, 200, {
         preferenceId: preference.id,
+        checkoutUrl: preference.checkout_url,
+        mercadoPagoMode,
         init_point: preference.init_point,
         sandbox_init_point: preference.sandbox_init_point,
       });
