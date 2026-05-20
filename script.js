@@ -29,6 +29,8 @@ let gifts = [
   { id: "lixeira-cozinha", type: "fixed", section: "daily", name: "Lixeira de cozinha", value: 75, category: "Cozinha", text: "Para completar os itens essenciais da casa.", status: "available" },
   { id: "kit-copos-simples", type: "fixed", section: "daily", name: "Kit de copos para o dia a dia", value: 80, category: "Mesa", text: "Para receber visitas e compartilhar bons momentos.", status: "available" },
   { id: "porta-mantimentos", type: "fixed", section: "daily", name: "Porta-mantimentos", value: 85, category: "Cozinha", text: "Para deixar a despensa mais organizada.", status: "available" },
+  { id: "sapateira", type: "fixed", section: "daily", name: "Sapateira", value: 100, category: "Lavanderia", text: "Para manter os calçados organizados no dia a dia.", status: "available" },
+  { id: "kit-de-cama", type: "fixed", section: "daily", name: "Kit de Cama", value: 110, category: "Quarto", text: "Para deixar nosso quarto mais aconchegante.", status: "available" },
   { id: "utensilios", type: "fixed", section: "daily", name: "Kit de utensílios de cozinha", value: 120, category: "Cozinha", text: "Para ajudar nos primeiros preparos da nossa casa.", status: "available" },
   { id: "potes", type: "fixed", section: "daily", name: "Conjunto de potes herméticos", value: 150, category: "Cozinha", text: "Para manter nossa cozinha mais organizada.", status: "available" },
   { id: "assadeiras", type: "fixed", section: "daily", name: "Kit de assadeiras antiaderentes", value: 150, category: "Cozinha", text: "Para preparar receitas no nosso dia a dia.", status: "available" },
