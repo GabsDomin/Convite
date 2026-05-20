@@ -336,11 +336,11 @@ function renderGiftCard(gift) {
   const reserved = gift.status === "reserved";
   const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
   const buttonText = gift.type === "quota" ? "Contribuir" : "Presentear";
-  const displayContributed = gift.type === "quota" && reserved
-    ? Math.max(gift.contributed, gift.goal)
-    : gift.contributed;
+  const displayContributed = gift.type === "quota" && reserved ? Math.max(gift.contributed, gift.goal) : gift.contributed;
   const progressValue = gift.goal > 0 ? Math.min(100, Math.round((displayContributed / gift.goal) * 100)) : 0;
   const quotaCompleted = gift.type === "quota" && progressValue >= 100;
+  const showReserved = gift.type === "quota" ? quotaCompleted : reserved;
+  const showActionButton = gift.type === "quota" ? !quotaCompleted : true;
 
   return `
     <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""}">
@@ -367,10 +367,12 @@ function renderGiftCard(gift) {
         </div>
       ` : ""}
       <div class="gift-footer">
-        <span class="badge ${reserved ? "reserved" : "available"}">${reserved ? "Reservado" : "Disponível"}</span>
-        <button class="button ${reserved ? "secondary" : "primary"}" data-gift-id="${gift.id}" ${reserved ? "disabled" : ""}>
-          ${reserved ? "Já escolhido" : buttonText}
-        </button>
+        <span class="badge ${showReserved ? "reserved" : "available"}">${showReserved ? "Reservado" : "Disponível"}</span>
+        ${showActionButton ? `
+          <button class="button ${reserved ? "secondary" : "primary"}" data-gift-id="${gift.id}" ${reserved ? "disabled" : ""}>
+            ${reserved ? "Já escolhido" : buttonText}
+          </button>
+        ` : ""}
       </div>
     </article>
   `;
