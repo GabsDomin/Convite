@@ -125,6 +125,12 @@ as $$
             and po.status in ('approved', 'paid')
         )
       ) then 'reserved'
+      when g.gift_type = 'quota' and coalesce((
+        select sum(gr.amount)
+        from public.gift_reservations gr
+        where gr.gift_id = g.id
+          and gr.gift_type = 'quota'
+      ), 0) >= g.goal then 'reserved'
       else g.status
     end as status,
     g.sort_order
