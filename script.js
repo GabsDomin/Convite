@@ -336,7 +336,11 @@ function renderGiftCard(gift) {
   const reserved = gift.status === "reserved";
   const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
   const buttonText = gift.type === "quota" ? "Contribuir" : "Presentear";
-  const progressValue = gift.goal > 0 ? Math.min(100, Math.round((gift.contributed / gift.goal) * 100)) : 0;
+  const displayContributed = gift.type === "quota" && reserved
+    ? Math.max(gift.contributed, gift.goal)
+    : gift.contributed;
+  const progressValue = gift.goal > 0 ? Math.min(100, Math.round((displayContributed / gift.goal) * 100)) : 0;
+  const quotaCompleted = gift.type === "quota" && progressValue >= 100;
 
   return `
     <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""}">
@@ -348,15 +352,15 @@ function renderGiftCard(gift) {
         <p class="gift-description">${gift.text}</p>
       </div>
       ${gift.type === "quota" && gift.options.length ? `
-        <div class="quota-progress" aria-label="Progresso da cota de ${gift.name}">
+        <div class="quota-progress ${quotaCompleted ? "completed" : ""}" aria-label="Progresso da cota de ${gift.name}">
           <div class="quota-progress-text">
-            <span>${formatCurrency(Math.min(gift.contributed, gift.goal))} arrecadados</span>
-            <strong>${progressValue}%</strong>
+            <span>${formatCurrency(Math.min(displayContributed, gift.goal))} arrecadados</span>
+            <strong>${quotaCompleted ? "Concluída" : `${progressValue}%`}</strong>
           </div>
           <div class="quota-progress-bar" aria-hidden="true">
             <span style="width: ${progressValue}%"></span>
           </div>
-          <p>Faltam ${formatCurrency(Math.max(gift.goal - gift.contributed, 0))}</p>
+          <p>${quotaCompleted ? "Todas as cotas foram presenteadas." : `Faltam ${formatCurrency(Math.max(gift.goal - displayContributed, 0))}`}</p>
         </div>
         <div class="quota-options" aria-label="Opções de cota para ${gift.name}">
           ${gift.options.map((option) => `<span>${formatCurrency(option)}</span>`).join("")}

@@ -506,6 +506,10 @@ svg {
   color: var(--royal);
 }
 
+.quota-progress.completed .quota-progress-text strong {
+  color: #166534;
+}
+
 .quota-progress-bar {
   overflow: hidden;
   height: 0.55rem;
@@ -521,10 +525,19 @@ svg {
   background: linear-gradient(90deg, var(--royal), var(--blue-mid));
 }
 
+.quota-progress.completed .quota-progress-bar span {
+  background: linear-gradient(90deg, #0f6b4f, #4fb477);
+}
+
 .quota-progress p {
   margin: 0.45rem 0 0;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.quota-progress.completed p {
+  color: #315d48;
+  font-weight: 700;
 }
 
 .gift-footer {
