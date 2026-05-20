@@ -351,7 +351,7 @@ async function handleApi(request, response, pathname) {
       if (!body.giftName) throw new Error("Nome do presente obrigatorio.");
       if (!Number(body.amount) || Number(body.amount) <= 0) throw new Error("Valor invalido.");
       if (!body.buyerName) throw new Error("Nome obrigatorio.");
-      if (!isValidEmail(body.buyerEmail)) throw new Error("E-mail invalido.");
+      if (body.buyerEmail && !isValidEmail(body.buyerEmail)) throw new Error("E-mail invalido.");
 
       const order = await callSupabaseRpc("create_mercadopago_order", {
         p_gift_id: body.giftId,
