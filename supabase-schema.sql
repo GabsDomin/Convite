@@ -147,7 +147,7 @@ values
   ('purificador', 'Purificador de água', 'fixed', 'special', 'Cozinha', 'Para termos água filtrada sempre à mão.', 800, null, null, 360),
   ('panelas-premium', 'Jogo de panelas premium', 'fixed', 'special', 'Cozinha', 'Para completar nossa cozinha com qualidade.', 900, null, null, 370),
   ('geladeira', 'Cota da geladeira', 'quota', 'quotas', 'Cota da casa', 'Para nos ajudar em um dos principais itens da casa nova.', null, 5500, array[150, 250, 500, 1000], 380),
-  ('maquina-lavar', 'Cota da máquina de lavar', 'quota', 'quotas', 'Cota da casa', 'Para facilitar nossa rotina com as roupas.', null, 2200, array[150, 250, 500, 1000], 390),
+  ('maquina-lavar', 'Cota da máquina de lavar', 'quota', 'quotas', 'Cota da casa', 'Para facilitar nossa rotina com as roupas.', null, 1600, array[150, 250, 500, 1000], 390),
   ('sofa', 'Cota do sofá', 'quota', 'quotas', 'Cota da casa', 'Para montar nossa sala com conforto.', null, 2500, array[150, 250, 500, 1000], 400),
   ('cama-colchao', 'Cota da cama e colchão', 'quota', 'quotas', 'Cota da casa', 'Para montar nosso cantinho de descanso.', null, 2500, array[150, 250, 500, 1000], 410),
   ('guarda-roupa', 'Cota do guarda-roupa', 'quota', 'quotas', 'Cota da casa', 'Para ajudar na organização do nosso quarto.', null, 2000, array[150, 250, 500], 420),

@@ -54,7 +54,7 @@ let gifts = [
   { id: "purificador", type: "fixed", section: "special", name: "Purificador de água", value: 800, category: "Cozinha", text: "Para termos água filtrada sempre à mão.", status: "available" },
   { id: "panelas-premium", type: "fixed", section: "special", name: "Jogo de panelas premium", value: 900, category: "Cozinha", text: "Para completar nossa cozinha com qualidade.", status: "available" },
   { id: "geladeira", type: "quota", section: "quotas", name: "Cota da geladeira", goal: 5500, options: [150, 250, 500, 1000], text: "Para nos ajudar em um dos principais itens da casa nova.", status: "available" },
-  { id: "maquina-lavar", type: "quota", section: "quotas", name: "Cota da máquina de lavar", goal: 2200, options: [150, 250, 500, 1000], text: "Para facilitar nossa rotina com as roupas.", status: "available" },
+  { id: "maquina-lavar", type: "quota", section: "quotas", name: "Cota da máquina de lavar", goal: 1600, contributed: 0, options: [150, 250, 500, 1000], text: "Para facilitar nossa rotina com as roupas.", status: "available" },
   { id: "sofa", type: "quota", section: "quotas", name: "Cota do sofá", goal: 2500, options: [150, 250, 500, 1000], text: "Para montar nossa sala com conforto.", status: "available" },
   { id: "cama-colchao", type: "quota", section: "quotas", name: "Cota da cama e colchão", goal: 2500, options: [150, 250, 500, 1000], text: "Para montar nosso cantinho de descanso.", status: "available" },
   { id: "guarda-roupa", type: "quota", section: "quotas", name: "Cota do guarda-roupa", goal: 2000, options: [150, 250, 500], text: "Para ajudar na organização do nosso quarto.", status: "available" },
@@ -326,6 +326,7 @@ function normalizeGiftForUi(gift) {
     ...gift,
     value: Number(gift.value || 0),
     goal: Number(gift.goal || 0),
+    contributed: Number(gift.contributed || 0),
     options: Array.isArray(gift.options) ? gift.options.map(Number) : [],
     status: gift.status || "available",
   };
@@ -335,6 +336,7 @@ function renderGiftCard(gift) {
   const reserved = gift.status === "reserved";
   const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
   const buttonText = gift.type === "quota" ? "Contribuir" : "Presentear";
+  const progressValue = gift.goal > 0 ? Math.min(100, Math.round((gift.contributed / gift.goal) * 100)) : 0;
 
   return `
     <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""}">
@@ -346,14 +348,24 @@ function renderGiftCard(gift) {
         <p class="gift-description">${gift.text}</p>
       </div>
       ${gift.type === "quota" && gift.options.length ? `
+        <div class="quota-progress" aria-label="Progresso da cota de ${gift.name}">
+          <div class="quota-progress-text">
+            <span>${formatCurrency(Math.min(gift.contributed, gift.goal))} arrecadados</span>
+            <strong>${progressValue}%</strong>
+          </div>
+          <div class="quota-progress-bar" aria-hidden="true">
+            <span style="width: ${progressValue}%"></span>
+          </div>
+          <p>Faltam ${formatCurrency(Math.max(gift.goal - gift.contributed, 0))}</p>
+        </div>
         <div class="quota-options" aria-label="Opções de cota para ${gift.name}">
           ${gift.options.map((option) => `<span>${formatCurrency(option)}</span>`).join("")}
         </div>
       ` : ""}
       <div class="gift-footer">
         <span class="badge ${reserved ? "reserved" : "available"}">${reserved ? "Reservado" : "Disponível"}</span>
-        <button class="button ${reserved ? "secondary" : "primary"}" data-gift-id="${gift.id}" ${reserved && gift.type === "fixed" ? "disabled" : ""}>
-          ${reserved && gift.type === "fixed" ? "Já escolhido" : buttonText}
+        <button class="button ${reserved ? "secondary" : "primary"}" data-gift-id="${gift.id}" ${reserved ? "disabled" : ""}>
+          ${reserved ? "Já escolhido" : buttonText}
         </button>
       </div>
     </article>

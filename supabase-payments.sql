@@ -81,7 +81,9 @@ to anon, authenticated
 using (false)
 with check (false);
 
-create or replace function public.get_public_gifts()
+drop function if exists public.get_public_gifts();
+
+create function public.get_public_gifts()
 returns table (
   id text,
   name text,
@@ -92,6 +94,7 @@ returns table (
   value integer,
   goal integer,
   quota_options integer[],
+  contributed_amount integer,
   status text,
   sort_order integer
 )
@@ -109,6 +112,15 @@ as $$
     g.value,
     g.goal,
     g.quota_options,
+    case
+      when g.gift_type = 'quota' then coalesce((
+        select sum(gr.amount)
+        from public.gift_reservations gr
+        where gr.gift_id = g.id
+          and gr.gift_type = 'quota'
+      ), 0)::integer
+      else 0
+    end as contributed_amount,
     case
       when g.gift_type = 'fixed' and (
         exists (

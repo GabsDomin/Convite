@@ -288,6 +288,7 @@ function normalizeGift(gift) {
     name: gift.name,
     value: Number(gift.value || 0),
     goal: Number(gift.goal || 0),
+    contributed: Number(gift.contributed_amount || 0),
     options: quotaOptions.map(Number),
     category: gift.category,
     text: gift.description,
