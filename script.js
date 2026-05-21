@@ -6,7 +6,7 @@ const modal = document.querySelector("#modal");
 const modalContent = document.querySelector("#modal-content");
 const weddingAudio = document.querySelector("#wedding-audio");
 const musicToggle = document.querySelector("[data-music-toggle]");
-const audioStartTime = 11;
+const audioStartTime = 0;
 const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
 let audioBlocked = false;
@@ -754,12 +754,12 @@ if (useLocalGiftFallback) {
 }
 renderRsvpState();
 syncMusicButton();
-startWeddingAudio({ unmute: true, allowMutedFallback: true });
+startWeddingAudio({ unmute: true, allowMutedFallback: false });
 
 window.addEventListener("load", () => {
   loadPaymentConfig();
   loadGifts();
-  startWeddingAudio({ unmute: true, allowMutedFallback: true });
+  startWeddingAudio({ unmute: true, allowMutedFallback: false });
 });
 
 document.addEventListener("visibilitychange", () => {

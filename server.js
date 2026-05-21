@@ -52,6 +52,7 @@ const mimeTypes = {
 };
 
 const noCacheExtensions = new Set([".html", ".css", ".js"]);
+const rangeEnabledExtensions = new Set([".mp3"]);
 
 function resolveRequestPath(url) {
   const pathname = decodeURIComponent(new URL(url, `http://localhost:${port}`).pathname);
@@ -437,9 +438,42 @@ createServer(async (request, response) => {
   }
 
   const extension = extname(filePath).toLowerCase();
+  const fileSize = statSync(filePath).size;
+  const contentType = mimeTypes[extension] || "application/octet-stream";
+
+  if (rangeEnabledExtensions.has(extension) && request.headers.range) {
+    const range = request.headers.range;
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+
+    if (match) {
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Number(match[2]) : fileSize - 1;
+
+      if (start <= end && start >= 0 && end < fileSize) {
+        response.writeHead(206, {
+          "Content-Type": contentType,
+          "Content-Length": end - start + 1,
+          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "public, max-age=31536000, immutable",
+        });
+        createReadStream(filePath, { start, end }).pipe(response);
+        return;
+      }
+    }
+
+    response.writeHead(416, {
+      "Content-Range": `bytes */${fileSize}`,
+      "Accept-Ranges": "bytes",
+    });
+    response.end();
+    return;
+  }
 
   response.writeHead(200, {
-    "Content-Type": mimeTypes[extension] || "application/octet-stream",
+    "Content-Type": contentType,
+    "Content-Length": fileSize,
+    "Accept-Ranges": rangeEnabledExtensions.has(extension) ? "bytes" : "none",
     "Cache-Control": noCacheExtensions.has(extension)
       ? "no-cache, no-store, must-revalidate"
       : "public, max-age=31536000, immutable",
