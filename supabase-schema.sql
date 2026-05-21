@@ -126,6 +126,7 @@ values
   ('porta-mantimentos', 'Porta-mantimentos', 'fixed', 'daily', 'Cozinha', 'Para deixar a despensa mais organizada.', 85, null, null, 130),
   ('sapateira', 'Sapateira', 'fixed', 'daily', 'Lavanderia', 'Para manter os calçados organizados no dia a dia 👟', 100, null, null, 132),
   ('kit-de-cama', 'Kit de Cama', 'fixed', 'daily', 'Quarto', 'Para deixar nosso quarto mais aconchegante 🛏️', 110, null, null, 135),
+  ('edredom', 'Edredom', 'fixed', 'daily', 'Quarto', 'Para deixar nossa cama ainda mais confortável ✨', 120, null, null, 138),
   ('utensilios', 'Kit de utensílios de cozinha', 'fixed', 'daily', 'Cozinha', 'Para ajudar nos primeiros preparos da nossa casa.', 120, null, null, 140),
   ('kit-toalhas', 'Kit toalhas', 'fixed', 'daily', 'Banheiro', 'Para trazer conforto aos nossos banhos 🛁', 130, null, null, 145),
   ('potes', 'Conjunto de potes herméticos', 'fixed', 'daily', 'Cozinha', 'Para manter nossa cozinha mais organizada.', 150, null, null, 150),

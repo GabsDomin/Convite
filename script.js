@@ -36,6 +36,7 @@ let gifts = [
   { id: "porta-mantimentos", type: "fixed", section: "daily", name: "Porta-mantimentos", value: 85, category: "Cozinha", text: "Para deixar a despensa mais organizada.", status: "available" },
   { id: "sapateira", type: "fixed", section: "daily", name: "Sapateira", value: 100, category: "Lavanderia", text: "Para manter os calçados organizados no dia a dia 👟", status: "available" },
   { id: "kit-de-cama", type: "fixed", section: "daily", name: "Kit de Cama", value: 110, category: "Quarto", text: "Para deixar nosso quarto mais aconchegante 🛏️", status: "available" },
+  { id: "edredom", type: "fixed", section: "daily", name: "Edredom", value: 120, category: "Quarto", text: "Para deixar nossa cama ainda mais confortável ✨", status: "available" },
   { id: "utensilios", type: "fixed", section: "daily", name: "Kit de utensílios de cozinha", value: 120, category: "Cozinha", text: "Para ajudar nos primeiros preparos da nossa casa.", status: "available" },
   { id: "kit-toalhas", type: "fixed", section: "daily", name: "Kit toalhas", value: 130, category: "Banheiro", text: "Para trazer conforto aos nossos banhos 🛁", status: "available" },
   { id: "potes", type: "fixed", section: "daily", name: "Conjunto de potes herméticos", value: 150, category: "Cozinha", text: "Para manter nossa cozinha mais organizada.", status: "available" },
