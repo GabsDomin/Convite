@@ -10,6 +10,9 @@ const audioStartTime = 11;
 const rsvpStorageKey = "gabriel-halanaia-rsvp";
 let audioStarted = false;
 let audioBlocked = false;
+let audioPausedByVisibility = false;
+let audioWasPlayingBeforeVisibilityPause = false;
+let userMutedAudio = false;
 let paymentConfig = null;
 let paymentConfigPromise = null;
 let giftLoadPromise = null;
@@ -208,7 +211,13 @@ function syncMusicButton() {
   musicToggle.setAttribute("aria-pressed", String(weddingAudio.muted));
 
   const label = musicToggle.querySelector("span");
-  if (audioBlocked && weddingAudio.paused) {
+  if (document.hidden) {
+    musicToggle.setAttribute("aria-label", "Música pausada");
+    if (label) label.textContent = "Pausado";
+    return;
+  }
+
+  if ((audioBlocked || weddingAudio.muted || weddingAudio.paused) && !userMutedAudio) {
     musicToggle.setAttribute("aria-label", "Tocar música");
     if (label) label.textContent = "Tocar";
     return;
@@ -218,44 +227,97 @@ function syncMusicButton() {
   if (label) label.textContent = weddingAudio.muted ? "Som" : "Mutar";
 }
 
-async function startWeddingAudio() {
-  if (!weddingAudio || audioStarted) return;
+function prepareWeddingAudio() {
+  if (!weddingAudio) return;
 
-  weddingAudio.muted = false;
+  if (weddingAudio.currentTime < audioStartTime) {
+    weddingAudio.currentTime = audioStartTime;
+  }
+  weddingAudio.volume = 0.55;
+}
+
+async function startWeddingAudio({ unmute = true, allowMutedFallback = true } = {}) {
+  if (!weddingAudio || document.hidden) return false;
+
+  prepareWeddingAudio();
+
+  if (unmute && !userMutedAudio) {
+    weddingAudio.muted = false;
+  }
 
   try {
-    if (weddingAudio.currentTime < audioStartTime) {
-      weddingAudio.currentTime = audioStartTime;
-    }
-    weddingAudio.volume = 0.55;
     await weddingAudio.play();
     audioStarted = true;
     audioBlocked = false;
+    audioPausedByVisibility = false;
+    syncMusicButton();
+    return true;
   } catch (error) {
-    audioStarted = false;
-    audioBlocked = true;
+    if (allowMutedFallback) {
+      try {
+        weddingAudio.muted = true;
+        await weddingAudio.play();
+        audioStarted = true;
+        audioBlocked = true;
+        audioPausedByVisibility = false;
+        syncMusicButton();
+        return false;
+      } catch (mutedError) {
+        audioStarted = false;
+        audioBlocked = true;
+      }
+    } else {
+      audioStarted = false;
+      audioBlocked = true;
+    }
   }
 
   syncMusicButton();
+  return false;
 }
 
 function enableAudioAfterInteraction() {
-  if (audioStarted || !audioBlocked) return;
-  startWeddingAudio();
+  if (!weddingAudio || document.hidden) return;
+  if (!weddingAudio.paused && !weddingAudio.muted && !audioBlocked) return;
+
+  userMutedAudio = false;
+  startWeddingAudio({ unmute: true, allowMutedFallback: false });
 }
 
 async function toggleMusic() {
   if (!weddingAudio) return;
 
-  if (!audioStarted || weddingAudio.paused) {
+  if (!audioStarted || weddingAudio.paused || weddingAudio.muted || audioBlocked) {
+    userMutedAudio = false;
     weddingAudio.muted = false;
-    await startWeddingAudio();
+    await startWeddingAudio({ unmute: true, allowMutedFallback: false });
     syncMusicButton();
     return;
   }
 
-  weddingAudio.muted = !weddingAudio.muted;
+  userMutedAudio = true;
+  weddingAudio.muted = true;
   syncMusicButton();
+}
+
+function handleAudioVisibility() {
+  if (!weddingAudio) return;
+
+  if (document.hidden) {
+    audioWasPlayingBeforeVisibilityPause = !weddingAudio.paused && !userMutedAudio;
+    if (!weddingAudio.paused) {
+      weddingAudio.pause();
+      audioPausedByVisibility = true;
+    }
+    syncMusicButton();
+    return;
+  }
+
+  if (audioPausedByVisibility && audioWasPlayingBeforeVisibilityPause) {
+    startWeddingAudio({ unmute: !userMutedAudio, allowMutedFallback: true });
+  } else {
+    syncMusicButton();
+  }
 }
 
 function giftIcon() {
@@ -692,13 +754,15 @@ if (useLocalGiftFallback) {
 }
 renderRsvpState();
 syncMusicButton();
+startWeddingAudio({ unmute: true, allowMutedFallback: true });
 
 window.addEventListener("load", () => {
   loadPaymentConfig();
   loadGifts();
-  startWeddingAudio();
+  startWeddingAudio({ unmute: true, allowMutedFallback: true });
 });
 
 document.addEventListener("visibilitychange", () => {
+  handleAudioVisibility();
   if (!document.hidden && Date.now() - lastGiftLoadAt > 120000) loadGifts();
 });
