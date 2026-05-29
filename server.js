@@ -275,7 +275,7 @@ async function getPublicGifts() {
     return await callSupabaseRpc("get_public_gifts");
   } catch (rpcError) {
     try {
-      return await readSupabaseTable("gifts?select=id,name,gift_type,section,category,description,value,goal,quota_options,status,sort_order&status=neq.hidden&order=sort_order.asc,name.asc");
+      return await readSupabaseTable("gifts?select=id,name,gift_type,section,category,description,image_url,value,goal,quota_options,status,sort_order&status=neq.hidden&order=sort_order.asc,name.asc");
     } catch (tableError) {
       throw new Error(`Tabela gifts: ${tableError.message}. RPC get_public_gifts: ${rpcError.message}`);
     }
@@ -298,6 +298,7 @@ function normalizeGift(gift) {
     options: quotaOptions.map(Number),
     category: gift.category,
     text: gift.description,
+    imageUrl: gift.image_url || "",
     status: gift.status,
   };
 }

@@ -114,6 +114,36 @@ function formatCurrency(value) {
   }).format(value);
 }
 
+function escapeAttribute(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function normalizeImageUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+
+  try {
+    const parsedUrl = new URL(url);
+    return ["http:", "https:"].includes(parsedUrl.protocol) ? parsedUrl.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function renderGiftImage(gift) {
+  if (!gift.imageUrl) return "";
+
+  return `
+    <figure class="gift-image">
+      <img src="${escapeAttribute(gift.imageUrl)}" alt="${escapeAttribute(gift.name)}" loading="lazy">
+    </figure>
+  `;
+}
+
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -353,10 +383,11 @@ function renderGifts() {
       gift.text,
       gift.status,
       gift.category,
+      gift.imageUrl,
       gift.value,
       gift.goal,
       gift.contributed,
-      gift.options.join(","),
+      Array.isArray(gift.options) ? gift.options.join(",") : "",
     ]),
   });
 
@@ -441,6 +472,7 @@ function normalizeGiftForUi(gift) {
     contributed: Number(gift.contributed || 0),
     options: Array.isArray(gift.options) ? gift.options.map(Number) : [],
     status: gift.status || "available",
+    imageUrl: normalizeImageUrl(gift.imageUrl),
   };
 }
 
@@ -455,8 +487,9 @@ function renderGiftCard(gift) {
   const showActionButton = gift.type === "quota" ? !quotaCompleted : true;
 
   return `
-    <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""}">
+    <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""} ${gift.imageUrl ? "has-image" : ""}">
       <div class="gift-icon">${giftIcon()}</div>
+      ${renderGiftImage(gift)}
       <div class="gift-card-main">
         <span class="gift-category">${gift.type === "quota" ? "Cota da casa" : gift.category}</span>
         <h4>${gift.name}</h4>

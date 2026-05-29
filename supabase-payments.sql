@@ -42,6 +42,9 @@ alter table public.payment_orders
 alter table public.payment_orders
   alter column gateway set default 'mercado_pago';
 
+alter table public.gifts
+  add column if not exists image_url text;
+
 do $$
 declare
   status_constraint text;
@@ -91,6 +94,7 @@ returns table (
   section text,
   category text,
   description text,
+  image_url text,
   value integer,
   goal integer,
   quota_options integer[],
@@ -109,6 +113,7 @@ as $$
     g.section,
     g.category,
     g.description,
+    g.image_url,
     g.value,
     g.goal,
     g.quota_options,

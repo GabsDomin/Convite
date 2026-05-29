@@ -24,6 +24,7 @@ create table if not exists public.gifts (
   section text not null check (section in ('daily', 'home', 'special', 'quotas')),
   category text,
   description text not null,
+  image_url text,
   value integer,
   goal integer,
   quota_options integer[],
@@ -37,6 +38,9 @@ create table if not exists public.gifts (
     (gift_type = 'quota' and value is null and goal is not null and quota_options is not null)
   )
 );
+
+alter table public.gifts
+  add column if not exists image_url text;
 
 create table if not exists public.gift_reservations (
   id uuid primary key default gen_random_uuid(),
