@@ -139,6 +139,26 @@ function isValidEmail(value) {
   return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function normalizeImageUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+
+  try {
+    const parsedUrl = new URL(url);
+    const driveFileMatch = parsedUrl.hostname.includes("drive.google.com")
+      ? parsedUrl.pathname.match(/\/file\/d\/([^/]+)/)
+      : null;
+
+    if (driveFileMatch?.[1]) {
+      return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveFileMatch[1])}`;
+    }
+
+    return ["http:", "https:"].includes(parsedUrl.protocol) ? parsedUrl.href : "";
+  } catch {
+    return "";
+  }
+}
+
 function normalizeMercadoPagoStatus(status) {
   if (status === "approved") return "approved";
   if (["pending", "in_process", "in_mediation"].includes(status)) return "pending";
@@ -298,7 +318,7 @@ function normalizeGift(gift) {
     options: quotaOptions.map(Number),
     category: gift.category,
     text: gift.description,
-    imageUrl: gift.image_url || "",
+    imageUrl: normalizeImageUrl(gift.image_url),
     status: gift.status,
   };
 }

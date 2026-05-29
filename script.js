@@ -128,6 +128,13 @@ function normalizeImageUrl(value) {
 
   try {
     const parsedUrl = new URL(url);
+    const driveFileMatch = parsedUrl.hostname.includes("drive.google.com")
+      ? parsedUrl.pathname.match(/\/file\/d\/([^/]+)/)
+      : null;
+    if (driveFileMatch?.[1]) {
+      return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveFileMatch[1])}`;
+    }
+
     return ["http:", "https:"].includes(parsedUrl.protocol) ? parsedUrl.href : "";
   } catch {
     return "";
