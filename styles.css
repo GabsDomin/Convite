@@ -447,7 +447,8 @@ svg {
   margin: 0;
   overflow: hidden;
   border-radius: 8px;
-  background: linear-gradient(135deg, #f7faff, #eef4ff);
+  background: transparent;
+  pointer-events: none;
 }
 
 .gift-image img {
@@ -455,6 +456,7 @@ svg {
   height: 100%;
   object-fit: contain;
   padding: 0.45rem;
+  filter: drop-shadow(0 14px 18px rgba(0, 47, 115, 0.12));
 }
 
 .gift-card.has-image .gift-icon,
@@ -1005,6 +1007,22 @@ svg {
   .gift-card,
   .modal {
     padding: 1.35rem;
+  }
+
+  .gift-card.has-image .gift-icon,
+  .gift-card.has-image .gift-card-main {
+    max-width: calc(100% - 6.75rem);
+  }
+
+  .gift-image {
+    top: 1rem;
+    right: 0.9rem;
+    width: 6.4rem;
+    height: 5.6rem;
+  }
+
+  .gift-image img {
+    padding: 0.2rem;
   }
 
 }
