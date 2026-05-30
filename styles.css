@@ -1016,14 +1016,14 @@ svg {
 
   .gift-card.has-image .gift-icon,
   .gift-card.has-image .gift-card-main {
-    max-width: calc(100% - 6rem);
+    max-width: calc(100% - 6.9rem);
   }
 
   .gift-image {
-    top: 0.95rem;
-    right: 0.75rem;
-    width: 5.6rem;
-    height: 5.1rem;
+    top: 0.9rem;
+    right: 0.65rem;
+    width: 6.5rem;
+    height: 5.9rem;
   }
 
   .gift-image img {
