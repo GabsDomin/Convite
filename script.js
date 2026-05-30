@@ -132,7 +132,7 @@ function normalizeImageUrl(value) {
       ? parsedUrl.pathname.match(/\/file\/d\/([^/]+)/)
       : null;
     if (driveFileMatch?.[1]) {
-      return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveFileMatch[1])}`;
+      return `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileMatch[1])}&sz=w700`;
     }
 
     return ["http:", "https:"].includes(parsedUrl.protocol) ? parsedUrl.href : "";
@@ -146,7 +146,7 @@ function renderGiftImage(gift) {
 
   return `
     <figure class="gift-image">
-      <img src="${escapeAttribute(gift.imageUrl)}" alt="${escapeAttribute(gift.name)}" loading="lazy">
+      <img src="${escapeAttribute(gift.imageUrl)}" alt="${escapeAttribute(gift.name)}" loading="lazy" onerror="this.closest('.gift-image')?.remove(); this.closest('.gift-card')?.classList.remove('has-image');">
     </figure>
   `;
 }

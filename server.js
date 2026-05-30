@@ -150,7 +150,7 @@ function normalizeImageUrl(value) {
       : null;
 
     if (driveFileMatch?.[1]) {
-      return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveFileMatch[1])}`;
+      return `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileMatch[1])}&sz=w700`;
     }
 
     return ["http:", "https:"].includes(parsedUrl.protocol) ? parsedUrl.href : "";
