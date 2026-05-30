@@ -151,6 +151,11 @@ function renderGiftImage(gift) {
   `;
 }
 
+function renderGiftDescription(gift) {
+  const className = gift.imageUrl ? "gift-description image-description" : "gift-description";
+  return `<p class="${className}">${gift.text}</p>`;
+}
+
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -501,8 +506,9 @@ function renderGiftCard(gift) {
         <span class="gift-category">${gift.type === "quota" ? "Cota da casa" : gift.category}</span>
         <h4>${gift.name}</h4>
         <p class="gift-price">${valueText}</p>
-        <p class="gift-description">${gift.text}</p>
+        ${gift.imageUrl ? "" : renderGiftDescription(gift)}
       </div>
+      ${gift.imageUrl ? renderGiftDescription(gift) : ""}
       ${gift.type === "quota" && gift.options.length ? `
         <div class="quota-progress ${quotaCompleted ? "completed" : ""}" aria-label="Progresso da cota de ${gift.name}">
           <div class="quota-progress-text">
