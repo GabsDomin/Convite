@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
@@ -52,17 +52,32 @@ const mimeTypes = {
 
 const noCacheExtensions = new Set([".html", ".css", ".js"]);
 const rangeEnabledExtensions = new Set([".mp3"]);
+const indexDocument = { content: readFileSync(new URL("./index.html", import.meta.url)), extension: ".html" };
+const stylesDocument = { content: readFileSync(new URL("./styles.css", import.meta.url)), extension: ".css" };
+const scriptDocument = { content: readFileSync(new URL("./script.js", import.meta.url)), extension: ".js" };
+const paymentSuccessDocument = {
+  content: readFileSync(new URL("./pagamento/sucesso/index.html", import.meta.url)),
+  extension: ".html",
+};
+const paymentErrorDocument = {
+  content: readFileSync(new URL("./pagamento/erro/index.html", import.meta.url)),
+  extension: ".html",
+};
+const paymentPendingDocument = {
+  content: readFileSync(new URL("./pagamento/pendente/index.html", import.meta.url)),
+  extension: ".html",
+};
 const publicFiles = new Map([
-  ["/", resolve(root, "index.html")],
-  ["/index.html", resolve(root, "index.html")],
-  ["/styles.css", resolve(root, "styles.css")],
-  ["/script.js", resolve(root, "script.js")],
-  ["/pagamento/sucesso", resolve(root, "pagamento", "sucesso", "index.html")],
-  ["/pagamento/sucesso/", resolve(root, "pagamento", "sucesso", "index.html")],
-  ["/pagamento/erro", resolve(root, "pagamento", "erro", "index.html")],
-  ["/pagamento/erro/", resolve(root, "pagamento", "erro", "index.html")],
-  ["/pagamento/pendente", resolve(root, "pagamento", "pendente", "index.html")],
-  ["/pagamento/pendente/", resolve(root, "pagamento", "pendente", "index.html")],
+  ["/", indexDocument],
+  ["/index.html", indexDocument],
+  ["/styles.css", stylesDocument],
+  ["/script.js", scriptDocument],
+  ["/pagamento/sucesso", paymentSuccessDocument],
+  ["/pagamento/sucesso/", paymentSuccessDocument],
+  ["/pagamento/erro", paymentErrorDocument],
+  ["/pagamento/erro/", paymentErrorDocument],
+  ["/pagamento/pendente", paymentPendingDocument],
+  ["/pagamento/pendente/", paymentPendingDocument],
 ]);
 
 const securityHeaders = {
@@ -90,9 +105,7 @@ function responseHeaders(extraHeaders = {}) {
   return { ...securityHeaders, ...extraHeaders };
 }
 
-function resolvePublicFile(pathname) {
-  const exactFile = publicFiles.get(pathname);
-  if (exactFile) return exactFile;
+function resolvePublicAsset(pathname) {
   if (!pathname.startsWith("/assets/")) return null;
 
   try {
@@ -103,6 +116,17 @@ function resolvePublicFile(pathname) {
   } catch {
     return null;
   }
+}
+
+function sendBundledPublicFile(request, response, file) {
+  response.writeHead(200, responseHeaders({
+    "Content-Type": mimeTypes[file.extension],
+    "Content-Length": file.content.byteLength,
+    "Accept-Ranges": "none",
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+  }));
+  if (request.method === "HEAD") response.end();
+  else response.end(file.content);
 }
 
 function sendJson(response, statusCode, payload, extraHeaders = {}) {
@@ -619,7 +643,13 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  const filePath = resolvePublicFile(pathname);
+  const bundledFile = publicFiles.get(pathname);
+  if (bundledFile) {
+    sendBundledPublicFile(request, response, bundledFile);
+    return;
+  }
+
+  const filePath = resolvePublicAsset(pathname);
   if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
     response.writeHead(404, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
     response.end("Arquivo não encontrado");
