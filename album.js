@@ -20,6 +20,11 @@ const storyShareButton = document.querySelector("[data-share-story]");
 const storyShareLabel = document.querySelector("[data-story-share-label]");
 const storyShareHint = document.querySelector("[data-story-share-hint]");
 const toast = document.querySelector("[data-toast]");
+const heroCarousel = document.querySelector("[data-hero-carousel]");
+const heroSlides = document.querySelectorAll("[data-hero-slide]");
+const heroDots = document.querySelectorAll("[data-hero-dot]");
+const heroPreviousButton = document.querySelector("[data-hero-previous]");
+const heroNextButton = document.querySelector("[data-hero-next]");
 const cameraLaunchButton = document.querySelector("[data-open-camera]");
 const cameraPanel = document.querySelector("[data-camera-panel]");
 const cameraPreview = document.querySelector("[data-camera-preview]");
@@ -72,6 +77,9 @@ let activeStoryPerson = "";
 let activeStoryIndex = 0;
 let storyTimer;
 let toastTimer;
+let activeHeroSlide = 0;
+let heroTimer;
+let heroTouchStartX;
 let cameraStream;
 let cameraFacingMode = "environment";
 let cameraMode = "photo";
@@ -81,6 +89,33 @@ let torchEnabled = false;
 const maximumRecordingDuration = 30_000;
 const localCameraPreview = ["127.0.0.1", "localhost"].includes(location.hostname)
   && new URLSearchParams(location.search).has("camera-preview");
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+function stopHeroRotation() {
+  window.clearTimeout(heroTimer);
+  heroTimer = undefined;
+}
+
+function scheduleHeroRotation() {
+  stopHeroRotation();
+  if (reducedMotion.matches || document.hidden) return;
+  heroTimer = window.setTimeout(() => {
+    showHeroSlide(activeHeroSlide + 1);
+  }, 5500);
+}
+
+function showHeroSlide(index, shouldSchedule = true) {
+  activeHeroSlide = (index + heroSlides.length) % heroSlides.length;
+  heroSlides.forEach((slide, slideIndex) => {
+    const isActive = slideIndex === activeHeroSlide;
+    slide.classList.toggle("is-active", isActive);
+    slide.setAttribute("aria-hidden", String(!isActive));
+  });
+  heroDots.forEach((dot, dotIndex) => {
+    dot.setAttribute("aria-pressed", String(dotIndex === activeHeroSlide));
+  });
+  if (shouldSchedule) scheduleHeroRotation();
+}
 
 function getInitials(name) {
   return name
@@ -1021,6 +1056,31 @@ document.querySelectorAll("[data-filter]").forEach((button) => {
   button.addEventListener("click", () => setActiveFilter(button.dataset.filter));
 });
 
+heroPreviousButton.addEventListener("click", () => showHeroSlide(activeHeroSlide - 1));
+heroNextButton.addEventListener("click", () => showHeroSlide(activeHeroSlide + 1));
+heroDots.forEach((dot) => {
+  dot.addEventListener("click", () => showHeroSlide(Number(dot.dataset.heroDot)));
+});
+heroCarousel.addEventListener("mouseenter", stopHeroRotation);
+heroCarousel.addEventListener("mouseleave", scheduleHeroRotation);
+heroCarousel.addEventListener("focusin", stopHeroRotation);
+heroCarousel.addEventListener("focusout", scheduleHeroRotation);
+heroCarousel.addEventListener("touchstart", (event) => {
+  heroTouchStartX = event.changedTouches[0]?.clientX;
+  stopHeroRotation();
+}, { passive: true });
+heroCarousel.addEventListener("touchend", (event) => {
+  const endX = event.changedTouches[0]?.clientX;
+  if (Number.isFinite(heroTouchStartX) && Number.isFinite(endX)) {
+    const distance = endX - heroTouchStartX;
+    if (Math.abs(distance) > 45) showHeroSlide(activeHeroSlide + (distance < 0 ? 1 : -1), false);
+  }
+  heroTouchStartX = undefined;
+  scheduleHeroRotation();
+}, { passive: true });
+document.addEventListener("visibilitychange", scheduleHeroRotation);
+reducedMotion.addEventListener?.("change", scheduleHeroRotation);
+
 fileInput.addEventListener("change", renderSelectedFiles);
 cameraLaunchButton.addEventListener("click", startCamera);
 cameraCaptureButton.addEventListener("click", handleCameraCapture);
@@ -1119,3 +1179,4 @@ window.addEventListener("beforeunload", () => {
 
 renderStories();
 updateGalleryVisibility();
+scheduleHeroRotation();

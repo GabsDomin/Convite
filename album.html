@@ -20,31 +20,42 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
         Voltar ao convite
       </a>
-      <a class="album-signature" href="/">Gabriel &amp; Halanaia</a>
       <button class="button primary compact" type="button" data-open-upload>Compartilhar memórias</button>
     </header>
 
     <main>
       <section class="album-hero" aria-labelledby="album-title">
-        <div class="album-hero-copy">
-          <span class="eyebrow">Álbum coletivo</span>
-          <h1 id="album-title">Memórias do nosso dia</h1>
-          <p>
-            Compartilhe seu olhar e acompanhe as lembranças registradas por todos os convidados.
-          </p>
-          <div class="album-hero-actions">
-            <button class="button primary" type="button" data-open-upload>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
-              </svg>
-              Compartilhar agora
-            </button>
-            <a class="button secondary" href="#galeria">Ver galeria</a>
+        <div class="hero-carousel" data-hero-carousel aria-roledescription="carrossel" aria-label="Momentos do casamento">
+          <div class="hero-track">
+            <figure class="hero-slide is-active" data-hero-slide aria-hidden="false">
+              <img src="/assets/album-hero-rings.jpg" alt="Alianças entre flores claras" fetchpriority="high" />
+            </figure>
+            <figure class="hero-slide" data-hero-slide aria-hidden="true">
+              <img src="/assets/album-hero-bouquet.jpg" alt="Flores azuis e brancas" />
+            </figure>
+            <figure class="hero-slide" data-hero-slide aria-hidden="true">
+              <img src="/assets/album-hero-table.jpg" alt="Mesa de celebração com flores azuis" />
+            </figure>
           </div>
-        </div>
-        <div class="album-hero-mark" aria-hidden="true">
-          <span>G</span><b>&amp;</b><span>H</span>
-          <small>28 · 11 · 2026</small>
+
+          <div class="hero-overlay">
+            <span>Nosso álbum</span>
+            <h1 id="album-title"><span>Gabriel</span> <i>&amp;</i> <span>Halanaia</span></h1>
+            <p>Memórias do nosso dia</p>
+          </div>
+
+          <button class="hero-arrow hero-previous" type="button" aria-label="Foto anterior" data-hero-previous>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+          </button>
+          <button class="hero-arrow hero-next" type="button" aria-label="Próxima foto" data-hero-next>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+          </button>
+
+          <div class="hero-dots" role="group" aria-label="Escolher foto do cabeçalho">
+            <button type="button" aria-label="Mostrar foto 1" aria-pressed="true" data-hero-dot="0"></button>
+            <button type="button" aria-label="Mostrar foto 2" aria-pressed="false" data-hero-dot="1"></button>
+            <button type="button" aria-label="Mostrar foto 3" aria-pressed="false" data-hero-dot="2"></button>
+          </div>
         </div>
       </section>
 

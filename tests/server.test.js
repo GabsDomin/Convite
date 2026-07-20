@@ -71,6 +71,9 @@ test("serve somente os arquivos públicos esperados", async () => {
     "/album.css",
     "/album.js",
     "/assets/favicon.png",
+    "/assets/album-hero-rings.jpg",
+    "/assets/album-hero-bouquet.jpg",
+    "/assets/album-hero-table.jpg",
     "/pagamento/sucesso",
   ]) {
     const response = await fetch(`${baseUrl}${pathname}`);
@@ -220,6 +223,13 @@ test("protótipo mobile do álbum publica memórias, usa câmera e agrupa storie
   assert.match(albumScript, /memoryGrid\.prepend\(fragment\)/);
   assert.match(albumScript, /URL\.createObjectURL\(file\)/);
   assert.match(album, /Stories dos convidados/i);
+  assert.match(album, /data-hero-carousel/);
+  assert.match(album, /Gabriel[\s\S]*?Halanaia/);
+  assert.match(album, /data-hero-slide/g);
+  assert.match(album, /data-hero-dot="0"[\s\S]*?data-hero-dot="2"/);
+  assert.match(albumScript, /function showHeroSlide\(index/);
+  assert.match(albumScript, /heroCarousel\.addEventListener\("touchstart"/);
+  assert.match(albumStyles, /\.hero-slide\.is-active[\s\S]*?opacity:\s*1/);
   assert.match(album, /class="mobile-action-bar"/i);
   assert.match(albumStyles, /\.story-viewer[\s\S]*?height:\s*min\(calc\(100vh/i);
   assert.match(albumStyles, /\.memory-grid[\s\S]*?columns:\s*2/i);
