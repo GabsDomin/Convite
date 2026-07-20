@@ -30,15 +30,14 @@
           <span class="eyebrow">Álbum coletivo</span>
           <h1 id="album-title">Memórias do nosso dia</h1>
           <p>
-            Cada olhar guarda um momento diferente. Compartilhe suas fotos e vídeos e acompanhe,
-            junto com os outros convidados, as lembranças dessa celebração.
+            Compartilhe seu olhar e acompanhe as lembranças registradas por todos os convidados.
           </p>
           <div class="album-hero-actions">
             <button class="button primary" type="button" data-open-upload>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
               </svg>
-              Enviar fotos e vídeos
+              Compartilhar agora
             </button>
             <a class="button secondary" href="#galeria">Ver galeria</a>
           </div>
@@ -54,11 +53,22 @@
         <p>Os arquivos enviados nesta tela ficam somente neste navegador e desaparecem ao atualizar a página.</p>
       </aside>
 
+      <section class="stories-section" aria-labelledby="stories-title">
+        <div class="stories-heading">
+          <div>
+            <span>Agora</span>
+            <h2 id="stories-title">Stories dos convidados</h2>
+          </div>
+          <p>Toque em uma pessoa para acompanhar os momentos que ela compartilhou.</p>
+        </div>
+        <div class="stories-rail" data-stories-rail role="list" aria-label="Stories por convidado"></div>
+      </section>
+
       <section class="gallery-section" id="galeria" aria-labelledby="gallery-title">
         <div class="gallery-heading">
           <div>
-            <span class="eyebrow">Compartilhado por todos</span>
-            <h2 id="gallery-title">Nossa galeria</h2>
+            <span class="eyebrow">Todos os registros</span>
+            <h2 id="gallery-title">Memórias recentes</h2>
             <p>Os novos envios aparecem imediatamente, sem fila de aprovação.</p>
           </div>
           <button class="button primary gallery-upload" type="button" data-open-upload>+ Adicionar memórias</button>
@@ -187,6 +197,41 @@
       <div class="lightbox-media" data-lightbox-media></div>
       <div class="lightbox-caption" data-lightbox-caption></div>
     </dialog>
+
+    <dialog class="story-viewer" data-story-dialog aria-label="Stories do convidado">
+      <div class="story-progress" data-story-progress aria-hidden="true"></div>
+      <header class="story-header">
+        <span class="story-header-avatar" data-story-avatar aria-hidden="true"></span>
+        <span class="story-header-copy">
+          <strong data-story-name></strong>
+          <small>Compartilhado no álbum</small>
+        </span>
+        <button class="story-close" type="button" aria-label="Fechar stories" data-close-story>×</button>
+      </header>
+      <div class="story-stage" data-story-stage></div>
+      <button class="story-navigation story-previous" type="button" aria-label="Story anterior" data-story-previous>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+      </button>
+      <button class="story-navigation story-next" type="button" aria-label="Próximo story" data-story-next>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+      </button>
+      <footer class="story-caption" data-story-caption></footer>
+    </dialog>
+
+    <nav class="mobile-action-bar" aria-label="Ações do álbum">
+      <a href="#galeria">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 15l3-3 2 2 2-2 3 3M8 9h.01" /></svg>
+        <span>Galeria</span>
+      </a>
+      <button type="button" data-open-upload>
+        <span class="mobile-upload-icon">+</span>
+        <span>Enviar</span>
+      </button>
+      <a href="/">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7v9h-6v-6h-4v6H4z" /></svg>
+        <span>Convite</span>
+      </a>
+    </nav>
 
     <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
     <script src="/album.js?v=1" defer></script>

@@ -204,10 +204,11 @@ test("confirmação diferencia indivíduo, casal e responsável com menores", as
   assert.match(migration, /cardinality\(clean_additional_names\) <> 1/i);
 });
 
-test("protótipo do álbum publica memórias imediatamente e deixa clara a persistência local", async () => {
-  const [index, album, albumScript] = await Promise.all([
+test("protótipo mobile do álbum publica memórias e agrupa stories por convidado", async () => {
+  const [index, album, albumStyles, albumScript] = await Promise.all([
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../album.html", import.meta.url), "utf8"),
+    readFile(new URL("../album.css", import.meta.url), "utf8"),
     readFile(new URL("../album.js", import.meta.url), "utf8"),
   ]);
 
@@ -217,6 +218,12 @@ test("protótipo do álbum publica memórias imediatamente e deixa clara a persi
   assert.match(album, /Até 10 arquivos · fotos de 15 MB · vídeos de 50 MB/i);
   assert.match(albumScript, /memoryGrid\.prepend\(fragment\)/);
   assert.match(albumScript, /URL\.createObjectURL\(file\)/);
+  assert.match(album, /Stories dos convidados/i);
+  assert.match(album, /class="mobile-action-bar"/i);
+  assert.match(albumStyles, /\.story-viewer[\s\S]*?height:\s*min\(calc\(100vh/i);
+  assert.match(albumStyles, /\.memory-grid[\s\S]*?columns:\s*2/i);
+  assert.match(albumScript, /storyGroups\.set\(guestName, \{ slides: newStorySlides \}\)/);
+  assert.match(albumScript, /function openStory\(person\)/);
   assert.doesNotMatch(album, /on(?:click|change|submit)\s*=/i);
 });
 

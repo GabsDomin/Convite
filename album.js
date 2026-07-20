@@ -9,13 +9,117 @@ const galleryEmpty = document.querySelector("[data-gallery-empty]");
 const lightbox = document.querySelector("[data-lightbox]");
 const lightboxMedia = document.querySelector("[data-lightbox-media]");
 const lightboxCaption = document.querySelector("[data-lightbox-caption]");
+const storiesRail = document.querySelector("[data-stories-rail]");
+const storyDialog = document.querySelector("[data-story-dialog]");
+const storyProgress = document.querySelector("[data-story-progress]");
+const storyAvatar = document.querySelector("[data-story-avatar]");
+const storyName = document.querySelector("[data-story-name]");
+const storyStage = document.querySelector("[data-story-stage]");
+const storyCaption = document.querySelector("[data-story-caption]");
 const toast = document.querySelector("[data-toast]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime"]);
 const activeObjectUrls = new Set();
+const storyGroups = new Map([
+  ["Gabriel", {
+    slides: [
+      { kind: "placeholder", theme: "story-theme-blue", title: "Um novo capítulo", caption: "Preparativos para o nosso grande dia" },
+      { kind: "placeholder", theme: "story-theme-light", title: "Cada detalhe", caption: "Tudo sendo preparado com carinho" },
+    ],
+  }],
+  ["Halanaia", {
+    slides: [
+      { kind: "placeholder", theme: "story-theme-light", title: "Contando os dias", caption: "28 de novembro de 2026" },
+      { kind: "placeholder", theme: "story-theme-blue", title: "Nosso sonho", caption: "Uma noite para guardar para sempre" },
+    ],
+  }],
+  ["Convidada", {
+    slides: [
+      { kind: "placeholder", theme: "story-theme-night", title: "Outro olhar", caption: "Os convidados também contam essa história" },
+    ],
+  }],
+  ["Convidado", {
+    slides: [
+      { kind: "placeholder", theme: "story-theme-blue", title: "Memórias juntos", caption: "Cada registro encontra seu lugar aqui" },
+    ],
+  }],
+]);
 let activeFilter = "Todos";
+let activeStoryPerson = "";
+let activeStoryIndex = 0;
+let storyTimer;
 let toastTimer;
+
+function getInitials(name) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "♡";
+}
+
+function getStoryPreview(group) {
+  return group.slides.find((slide) => slide.kind === "media" && slide.type?.startsWith("image/"));
+}
+
+function renderAvatar(target, person, group) {
+  target.replaceChildren();
+  const preview = getStoryPreview(group);
+  if (preview) {
+    const image = document.createElement("img");
+    image.src = preview.url;
+    image.alt = "";
+    target.append(image);
+    return;
+  }
+  target.textContent = getInitials(person);
+}
+
+function renderStories() {
+  storiesRail.replaceChildren();
+
+  const addWrapper = document.createElement("div");
+  addWrapper.setAttribute("role", "listitem");
+  const addButton = document.createElement("button");
+  addButton.className = "story-item story-add";
+  addButton.type = "button";
+  addButton.setAttribute("aria-label", "Adicionar seu story");
+  const addRing = document.createElement("span");
+  addRing.className = "story-ring";
+  const addAvatar = document.createElement("span");
+  addAvatar.className = "story-avatar";
+  addAvatar.textContent = "+";
+  const addLabel = document.createElement("span");
+  addLabel.textContent = "Seu story";
+  addRing.append(addAvatar);
+  addButton.append(addRing, addLabel);
+  addButton.addEventListener("click", openUploadDialog);
+  addWrapper.append(addButton);
+  storiesRail.append(addWrapper);
+
+  storyGroups.forEach((group, person) => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("role", "listitem");
+    const button = document.createElement("button");
+    button.className = "story-item";
+    button.type = "button";
+    button.setAttribute("aria-label", `Ver stories de ${person}`);
+    const ring = document.createElement("span");
+    ring.className = "story-ring";
+    const avatar = document.createElement("span");
+    avatar.className = "story-avatar";
+    renderAvatar(avatar, person, group);
+    const label = document.createElement("span");
+    label.textContent = person;
+    ring.append(avatar);
+    button.append(ring, label);
+    button.addEventListener("click", () => openStory(person));
+    wrapper.append(button);
+    storiesRail.append(wrapper);
+  });
+}
 
 function formatFileSize(bytes) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -133,6 +237,88 @@ function openLightbox({ url, type, guestName, category }) {
   lightbox.showModal();
 }
 
+function clearStoryTimer() {
+  window.clearTimeout(storyTimer);
+  storyTimer = undefined;
+}
+
+function closeStory() {
+  clearStoryTimer();
+  const video = storyStage.querySelector("video");
+  video?.pause();
+  storyStage.replaceChildren();
+  if (storyDialog.open) storyDialog.close();
+}
+
+function showNextStory() {
+  const group = storyGroups.get(activeStoryPerson);
+  if (!group) return closeStory();
+  if (activeStoryIndex >= group.slides.length - 1) return closeStory();
+  activeStoryIndex += 1;
+  renderActiveStory();
+}
+
+function showPreviousStory() {
+  if (activeStoryIndex === 0) return;
+  activeStoryIndex -= 1;
+  renderActiveStory();
+}
+
+function renderActiveStory() {
+  clearStoryTimer();
+  const group = storyGroups.get(activeStoryPerson);
+  const slide = group?.slides[activeStoryIndex];
+  if (!group || !slide) return closeStory();
+
+  storyName.textContent = activeStoryPerson;
+  renderAvatar(storyAvatar, activeStoryPerson, group);
+  storyStage.replaceChildren();
+  storyProgress.replaceChildren();
+
+  group.slides.forEach((_, index) => {
+    const progressItem = document.createElement("span");
+    if (index < activeStoryIndex) progressItem.className = "complete";
+    if (index === activeStoryIndex) progressItem.className = "active";
+    storyProgress.append(progressItem);
+  });
+
+  if (slide.kind === "media") {
+    const media = slide.type.startsWith("video/")
+      ? document.createElement("video")
+      : document.createElement("img");
+    media.src = slide.url;
+    if (media instanceof HTMLVideoElement) {
+      media.controls = true;
+      media.playsInline = true;
+      media.addEventListener("ended", showNextStory, { once: true });
+    } else {
+      media.alt = `Story compartilhado por ${activeStoryPerson}`;
+      storyTimer = window.setTimeout(showNextStory, 6000);
+    }
+    storyStage.append(media);
+  } else {
+    const placeholder = document.createElement("div");
+    placeholder.className = `story-placeholder ${slide.theme}`;
+    const title = document.createElement("span");
+    title.textContent = slide.title;
+    const detail = document.createElement("small");
+    detail.textContent = slide.caption;
+    placeholder.append(title, detail);
+    storyStage.append(placeholder);
+    storyTimer = window.setTimeout(showNextStory, 6000);
+  }
+
+  storyCaption.textContent = slide.caption || "Memória compartilhada no álbum";
+}
+
+function openStory(person) {
+  if (!storyGroups.has(person)) return;
+  activeStoryPerson = person;
+  activeStoryIndex = 0;
+  if (!storyDialog.open) storyDialog.showModal();
+  renderActiveStory();
+}
+
 function createMemoryCard(file, guestName, category) {
   const objectUrl = URL.createObjectURL(file);
   activeObjectUrls.add(objectUrl);
@@ -177,7 +363,15 @@ function createMemoryCard(file, guestName, category) {
   caption.append(categoryLabel, title, author);
 
   card.append(mediaButton, caption);
-  return card;
+  return {
+    card,
+    slide: {
+      kind: "media",
+      url: objectUrl,
+      type: file.type,
+      caption: `${category} · compartilhado por ${guestName}`,
+    },
+  };
 }
 
 document.querySelectorAll("[data-open-upload]").forEach((button) => {
@@ -191,6 +385,10 @@ document.querySelectorAll("[data-close-upload]").forEach((button) => {
 document.querySelectorAll("[data-close-lightbox]").forEach((button) => {
   button.addEventListener("click", closeLightbox);
 });
+
+document.querySelector("[data-close-story]").addEventListener("click", closeStory);
+document.querySelector("[data-story-previous]").addEventListener("click", showPreviousStory);
+document.querySelector("[data-story-next]").addEventListener("click", showNextStory);
 
 document.querySelectorAll("[data-filter]").forEach((button) => {
   button.addEventListener("click", () => setActiveFilter(button.dataset.filter));
@@ -216,8 +414,20 @@ uploadForm.addEventListener("submit", (event) => {
   }
 
   const fragment = document.createDocumentFragment();
-  files.forEach((file) => fragment.append(createMemoryCard(file, guestName, category)));
+  const newStorySlides = [];
+  files.forEach((file) => {
+    const memory = createMemoryCard(file, guestName, category);
+    fragment.append(memory.card);
+    newStorySlides.push(memory.slide);
+  });
   memoryGrid.prepend(fragment);
+  const existingStoryGroup = storyGroups.get(guestName);
+  if (existingStoryGroup) {
+    existingStoryGroup.slides.push(...newStorySlides);
+  } else {
+    storyGroups.set(guestName, { slides: newStorySlides });
+  }
+  renderStories();
   setActiveFilter("Todos");
   closeUploadDialog();
   document.querySelector("#galeria").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -234,6 +444,10 @@ lightbox.addEventListener("click", (event) => {
   if (event.target === lightbox) closeLightbox();
 });
 
+storyDialog.addEventListener("click", (event) => {
+  if (event.target === storyDialog) closeStory();
+});
+
 uploadDialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   closeUploadDialog();
@@ -244,8 +458,14 @@ lightbox.addEventListener("cancel", (event) => {
   closeLightbox();
 });
 
+storyDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeStory();
+});
+
 window.addEventListener("beforeunload", () => {
   activeObjectUrls.forEach((url) => URL.revokeObjectURL(url));
 });
 
+renderStories();
 updateGalleryVisibility();
