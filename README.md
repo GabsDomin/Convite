@@ -35,9 +35,21 @@ No Supabase, abra o SQL Editor e execute os arquivos nesta ordem, inclusive se a
 supabase-schema.sql
 supabase-functions.sql
 supabase-payments.sql
+supabase-restricted-guests.sql
 ```
 
 Os scripts são reaplicáveis e restringem tabelas e funções à `service_role`. O navegador não recebe uma chave do Supabase.
+
+### Nomes sem acesso à confirmação
+
+Depois de executar `supabase-restricted-guests.sql`, cadastre os nomes pela tabela
+`restricted_guests` no Table Editor do Supabase. Preencha apenas `guest_name` e, se
+quiser, `internal_note`; `active` deve permanecer marcado. A comparação ignora
+maiúsculas, acentos e espaços extras. Para liberar uma pessoa sem apagar o cadastro,
+desmarque `active`.
+
+Quando um nome ativo dessa tabela tentar confirmar presença, nada será salvo e o
+site mostrará: “Infelizmente, seu nome não está na lista de convidados.”
 
 ## Mercado Pago
 

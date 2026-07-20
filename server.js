@@ -37,6 +37,7 @@ const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL").rep
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseSecretKey);
 const hasMercadoPagoConfig = Boolean(mercadoPagoAccessToken && mercadoPagoWebhookSecret);
 const mercadoPagoMode = mercadoPagoAccessToken.startsWith("TEST-") ? "sandbox" : "production";
+const guestNotInvitedMessage = "Infelizmente, seu nome não está na lista de convidados.";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -612,9 +613,13 @@ async function handleApi(request, response, pathname) {
 
     return false;
   } catch (error) {
-    const statusCode = error instanceof HttpError ? error.statusCode : 400;
+    const guestNotInvited = error.message === guestNotInvitedMessage;
+    const statusCode = guestNotInvited ? 403 : error instanceof HttpError ? error.statusCode : 400;
     const headers = error instanceof HttpError ? error.headers : {};
-    sendJson(response, statusCode, { error: error.message || "Erro ao processar solicitação." }, headers);
+    sendJson(response, statusCode, {
+      error: error.message || "Erro ao processar solicitação.",
+      ...(guestNotInvited ? { code: "guest_not_invited" } : {}),
+    }, headers);
     return true;
   }
 }

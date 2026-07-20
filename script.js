@@ -167,7 +167,9 @@ async function requestJson(url, options = {}) {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(payload.error || "Não foi possível salvar agora.");
+    const requestError = new Error(payload.error || "Não foi possível salvar agora.");
+    requestError.code = payload.code || "request_failed";
+    throw requestError;
   }
 
   return payload;
@@ -580,6 +582,19 @@ function showError(message) {
   `);
 }
 
+function showGuestNotInvited() {
+  openModal(`
+    <div class="modal-icon">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+    </div>
+    <h2 id="modal-title">Lista de convidados</h2>
+    <p>Infelizmente, seu nome não está na lista de convidados.</p>
+    <div class="modal-actions">
+      <button class="button primary" data-close-modal>Fechar</button>
+    </div>
+  `);
+}
+
 function openRsvpModal() {
   openModal(`
     <div class="modal-icon">
@@ -736,7 +751,8 @@ document.addEventListener("submit", async (event) => {
       renderRsvpState();
       showSuccess("Presença confirmada com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.");
     } catch (error) {
-      showError(error.message);
+      if (error.code === "guest_not_invited") showGuestNotInvited();
+      else showError(error.message);
     }
   }
 
