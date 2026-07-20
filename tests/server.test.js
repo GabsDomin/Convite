@@ -121,3 +121,12 @@ test("data exibida e data do casamento usam 2026", async () => {
   assert.doesNotMatch(html, /28 nov 2025/);
   assert.match(script, /2026-11-28T11:30:00-03:00/);
 });
+
+test("configuração da Vercel inclui os arquivos estáticos no servidor Node", async () => {
+  const config = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
+  const includeFiles = config.functions?.["server.ts"]?.includeFiles || "";
+
+  for (const expectedPath of ["index.html", "styles.css", "script.js", "assets/**", "pagamento/**"]) {
+    assert.equal(includeFiles.includes(expectedPath), true, expectedPath);
+  }
+});
