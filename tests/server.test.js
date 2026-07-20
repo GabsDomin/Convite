@@ -47,7 +47,7 @@ before(async () => {
       PORT: String(port),
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-test-secret",
-      MERCADO_PAGO_ACCESS_TOKEN: "",
+      MERCADO_PAGO_ACCESS_TOKEN: "TEST-token-sem-webhook",
       MERCADO_PAGO_WEBHOOK_SECRET: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
