@@ -1302,11 +1302,67 @@ dialog::backdrop {
   left: 0;
   right: 0;
   bottom: 0;
-  min-height: 86px;
-  padding: 2.7rem 1rem 1rem;
+  display: grid;
+  justify-items: center;
+  min-height: 148px;
+  padding: 3.4rem 1rem 0.85rem;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.7), transparent);
   font-size: 0.82rem;
   text-align: center;
+}
+
+.story-caption-copy {
+  display: block;
+  margin-bottom: 0.65rem;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.story-share-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem 0.4rem 0.45rem;
+  color: #111827;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.story-share-button:active {
+  transform: scale(0.97);
+}
+
+.story-share-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: white;
+  background: radial-gradient(circle at 68% 75%, #feda75 0 16%, #fa7e1e 26%, #d62976 55%, #962fbf 76%, #4f5bd5 100%);
+}
+
+.story-share-icon svg {
+  width: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+}
+
+.story-share-icon .story-share-dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+.story-caption > small {
+  margin-top: 0.35rem;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.58rem;
 }
 
 .mobile-action-bar {

@@ -243,7 +243,20 @@
       <button class="story-navigation story-next" type="button" aria-label="Próximo story" data-story-next>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
       </button>
-      <footer class="story-caption" data-story-caption></footer>
+      <footer class="story-caption">
+        <span class="story-caption-copy" data-story-caption></span>
+        <button class="story-share-button" type="button" data-share-story>
+          <span class="story-share-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <rect x="3" y="3" width="18" height="18" rx="5" />
+              <circle cx="12" cy="12" r="4" />
+              <circle class="story-share-dot" cx="17.4" cy="6.7" r="1" />
+            </svg>
+          </span>
+          <span data-story-share-label>Compartilhar no Instagram</span>
+        </button>
+        <small data-story-share-hint>no celular, escolha Instagram → Stories</small>
+      </footer>
     </dialog>
 
     <nav class="mobile-action-bar" aria-label="Ações do álbum">

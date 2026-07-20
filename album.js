@@ -16,6 +16,9 @@ const storyAvatar = document.querySelector("[data-story-avatar]");
 const storyName = document.querySelector("[data-story-name]");
 const storyStage = document.querySelector("[data-story-stage]");
 const storyCaption = document.querySelector("[data-story-caption]");
+const storyShareButton = document.querySelector("[data-share-story]");
+const storyShareLabel = document.querySelector("[data-story-share-label]");
+const storyShareHint = document.querySelector("[data-story-share-hint]");
 const toast = document.querySelector("[data-toast]");
 const cameraLaunchButton = document.querySelector("[data-open-camera]");
 const cameraPanel = document.querySelector("[data-camera-panel]");
@@ -418,6 +421,41 @@ function renderActiveStory() {
   }
 
   storyCaption.textContent = slide.caption || "Memória compartilhada no álbum";
+  const canShareMedia = slide.kind === "media" && Boolean(slide.file);
+  storyShareLabel.textContent = canShareMedia ? "Compartilhar no Instagram" : "Compartilhar este álbum";
+  storyShareHint.textContent = canShareMedia
+    ? "no celular, escolha Instagram → Stories"
+    : "envie o link para quem também viveu esse momento";
+}
+
+async function shareActiveStory() {
+  clearStoryTimer();
+  const group = storyGroups.get(activeStoryPerson);
+  const slide = group?.slides[activeStoryIndex];
+  if (!slide) return;
+
+  try {
+    if (slide.kind === "media" && slide.file && navigator.canShare?.({ files: [slide.file] })) {
+      await navigator.share({ files: [slide.file] });
+      showToast("Foto enviada ao menu de compartilhamento do celular.");
+      return;
+    }
+
+    if (navigator.share) {
+      await navigator.share({
+        title: "Memórias de Gabriel & Halanaia",
+        text: "Veja e compartilhe as memórias do nosso dia.",
+        url: `${location.origin}/album`,
+      });
+      return;
+    }
+
+    await navigator.clipboard.writeText(`${location.origin}/album`);
+    showToast("Link do álbum copiado! Abra o Instagram para compartilhar.");
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    showToast("Não foi possível abrir o compartilhamento neste navegador.");
+  }
 }
 
 function openStory(person) {
@@ -478,6 +516,7 @@ function createMemoryCard(file, guestName, category) {
       kind: "media",
       url: objectUrl,
       type: file.type,
+      file,
       caption: `${category} · compartilhado por ${guestName}`,
     },
   };
@@ -498,6 +537,7 @@ document.querySelectorAll("[data-close-lightbox]").forEach((button) => {
 document.querySelector("[data-close-story]").addEventListener("click", closeStory);
 document.querySelector("[data-story-previous]").addEventListener("click", showPreviousStory);
 document.querySelector("[data-story-next]").addEventListener("click", showNextStory);
+storyShareButton.addEventListener("click", shareActiveStory);
 
 document.querySelectorAll("[data-filter]").forEach((button) => {
   button.addEventListener("click", () => setActiveFilter(button.dataset.filter));

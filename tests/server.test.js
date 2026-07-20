@@ -232,7 +232,11 @@ test("protótipo mobile do álbum publica memórias, usa câmera e agrupa storie
   assert.match(albumScript, /cameraCanvas\.toBlob/);
   assert.match(albumScript, /cameraStream\.getTracks\(\)/);
   assert.match(albumScript, /capturedFiles\.push\(new File/);
-  assert.match(server, /"Permissions-Policy": "camera=\(self\), microphone=\(\), geolocation=\(\)"/);
+  assert.match(album, /data-share-story[\s\S]*?Compartilhar no Instagram/i);
+  assert.match(albumScript, /navigator\.canShare\?\.\(\{ files: \[slide\.file\] \}\)/);
+  assert.match(albumScript, /await navigator\.share\(\{ files: \[slide\.file\] \}\)/);
+  assert.match(albumScript, /file,[\s\S]*?caption:/);
+  assert.match(server, /"Permissions-Policy": "camera=\(self\), web-share=\(self\), microphone=\(\), geolocation=\(\)"/);
   assert.doesNotMatch(album, /on(?:click|change|submit)\s*=/i);
 });
 

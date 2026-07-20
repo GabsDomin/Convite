@@ -104,7 +104,7 @@ const securityHeaders = {
     "form-action 'self'",
     "upgrade-insecure-requests",
   ].join("; "),
-  "Permissions-Policy": "camera=(self), microphone=(), geolocation=()",
+  "Permissions-Policy": "camera=(self), web-share=(self), microphone=(), geolocation=()",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
