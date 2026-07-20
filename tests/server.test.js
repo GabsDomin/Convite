@@ -148,6 +148,15 @@ test("confirmação prioriza os detalhes da cerimônia sem pressionar por presen
   assert.doesNotMatch(script, /Se entrou aqui procurando um presentinho/);
 });
 
+test("detalhes apresentam cerimônia, jantar e programação sem traje ou padrinhos", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+
+  assert.match(html, /<h3>Cerimônia<\/h3>[\s\S]*?<strong>Horário a confirmar<\/strong>/);
+  assert.match(html, /<h3>Jantar<\/h3>[\s\S]*?<strong>Após a cerimônia<\/strong>/);
+  assert.match(html, /<h3>Programação<\/h3>[\s\S]*?<strong>Mais detalhes em breve<\/strong>/);
+  assert.doesNotMatch(html, /11h30|Almoço|Traje|madrinhas|padrinhos/i);
+});
+
 test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", async () => {
   const config = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
   assert.equal(config.functions?.["server.ts"]?.includeFiles, "**/*");
