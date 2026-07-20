@@ -28,9 +28,17 @@ const cameraCanvas = document.querySelector("[data-camera-canvas]");
 const cameraCaptureButton = document.querySelector("[data-capture-camera]");
 const cameraSwitchButton = document.querySelector("[data-switch-camera]");
 const cameraCloseButton = document.querySelector("[data-close-camera]");
+const cameraRecording = document.querySelector("[data-camera-recording]");
+const recordingTime = document.querySelector("[data-recording-time]");
+const cameraTools = document.querySelector("[data-camera-tools]");
+const cameraZoom = document.querySelector("[data-camera-zoom]");
+const cameraZoomInput = document.querySelector("[data-camera-zoom-input]");
+const cameraZoomValue = document.querySelector("[data-camera-zoom-value]");
+const cameraTorchButton = document.querySelector("[data-camera-torch]");
+const cameraModeButtons = document.querySelectorAll("[data-camera-mode]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
-const allowedVideoTypes = new Set(["video/mp4", "video/quicktime"]);
+const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const activeObjectUrls = new Set();
 const capturedFiles = [];
 const storyGroups = new Map([
@@ -64,6 +72,11 @@ let storyTimer;
 let toastTimer;
 let cameraStream;
 let cameraFacingMode = "environment";
+let cameraMode = "photo";
+let cameraVideoTrack;
+let activeRecording;
+let torchEnabled = false;
+const maximumRecordingDuration = 30_000;
 
 function getInitials(name) {
   return name
@@ -181,18 +194,58 @@ function renderSelectedFiles() {
 
   files.slice(0, 10).forEach((file) => {
     const chip = document.createElement("span");
-    const source = capturedFiles.includes(file) ? "Foto da câmera · " : "";
+    const source = capturedFiles.includes(file)
+      ? `${file.type.startsWith("video/") ? "Vídeo" : "Foto"} da câmera · `
+      : "";
     chip.textContent = `${source}${file.name} · ${formatFileSize(file.size)}`;
     chip.title = file.name;
     selectedFiles.append(chip);
   });
 }
 
+function clearRecordingTimers(session) {
+  if (!session) return;
+  window.clearInterval(session.timer);
+  window.clearTimeout(session.stopTimer);
+}
+
+function resetRecordingInterface() {
+  cameraRecording.hidden = true;
+  recordingTime.textContent = "00:00";
+  cameraCaptureButton.classList.remove("is-recording");
+  cameraCaptureButton.setAttribute("aria-label", cameraMode === "video" ? "Iniciar gravação" : "Capturar foto");
+  cameraModeButtons.forEach((button) => {
+    button.disabled = button.dataset.cameraMode === "video" && !window.MediaRecorder;
+  });
+  cameraSwitchButton.disabled = false;
+}
+
+function stopActiveRecording(shouldSave = true) {
+  if (!activeRecording || activeRecording.recorder.state === "inactive") return;
+  const session = activeRecording;
+  session.discard = !shouldSave;
+  session.recorder.stop();
+  if (!shouldSave) activeRecording = undefined;
+}
+
+function resetCameraCapabilities() {
+  cameraVideoTrack = undefined;
+  torchEnabled = false;
+  cameraTools.hidden = true;
+  cameraZoom.hidden = true;
+  cameraTorchButton.hidden = true;
+  cameraTorchButton.classList.remove("is-active");
+  cameraTorchButton.setAttribute("aria-pressed", "false");
+}
+
 function stopCamera() {
+  stopActiveRecording(false);
   if (cameraStream) {
     cameraStream.getTracks().forEach((track) => track.stop());
     cameraStream = undefined;
   }
+  resetCameraCapabilities();
+  resetRecordingInterface();
   cameraVideo.srcObject = null;
   cameraVideo.classList.remove("is-mirrored");
   cameraPanel.hidden = true;
@@ -237,13 +290,198 @@ async function startCamera() {
       },
       audio: false,
     });
+
+    if (cameraMode === "video") {
+      try {
+        const microphoneStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        });
+        microphoneStream.getAudioTracks().forEach((track) => cameraStream.addTrack(track));
+      } catch {
+        showToast("Microfone não autorizado. O vídeo será gravado sem som.");
+      }
+    }
+
     cameraVideo.srcObject = cameraStream;
     await cameraVideo.play();
+    configureCameraCapabilities();
     cameraStatus.hidden = true;
   } catch (error) {
     const message = getCameraErrorMessage(error);
     stopCamera();
     showUploadError(message);
+  }
+}
+
+function configureCameraCapabilities() {
+  cameraVideoTrack = cameraStream?.getVideoTracks()[0];
+  if (!cameraVideoTrack) return;
+
+  const capabilities = typeof cameraVideoTrack.getCapabilities === "function"
+    ? cameraVideoTrack.getCapabilities()
+    : {};
+  const settings = typeof cameraVideoTrack.getSettings === "function"
+    ? cameraVideoTrack.getSettings()
+    : {};
+  const zoom = capabilities.zoom;
+  const supportsZoom = zoom
+    && Number.isFinite(zoom.min)
+    && Number.isFinite(zoom.max)
+    && zoom.max > zoom.min;
+
+  if (supportsZoom) {
+    const zoomStep = Number.isFinite(zoom.step) && zoom.step > 0 ? zoom.step : 0.1;
+    const currentZoom = Number.isFinite(settings.zoom) ? settings.zoom : zoom.min;
+    cameraZoomInput.min = String(zoom.min);
+    cameraZoomInput.max = String(zoom.max);
+    cameraZoomInput.step = String(zoomStep);
+    cameraZoomInput.value = String(currentZoom);
+    cameraZoomValue.textContent = `${Number(currentZoom.toFixed(1))}×`;
+    cameraZoom.hidden = false;
+  }
+
+  const torch = capabilities.torch;
+  const supportsTorch = torch === true || (Array.isArray(torch) && torch.includes(true));
+  cameraTorchButton.hidden = !supportsTorch;
+  cameraTools.hidden = !supportsZoom && !supportsTorch;
+}
+
+async function applyCameraZoom() {
+  if (!cameraVideoTrack) return;
+  const zoom = Number(cameraZoomInput.value);
+  cameraZoomValue.textContent = `${Number(zoom.toFixed(1))}×`;
+  try {
+    await cameraVideoTrack.applyConstraints({ advanced: [{ zoom }] });
+  } catch {
+    showUploadError("O zoom não pôde ser aplicado nesta câmera.");
+  }
+}
+
+async function toggleCameraTorch() {
+  if (!cameraVideoTrack) return;
+  const nextValue = !torchEnabled;
+  try {
+    await cameraVideoTrack.applyConstraints({ advanced: [{ torch: nextValue }] });
+    torchEnabled = nextValue;
+    cameraTorchButton.classList.toggle("is-active", torchEnabled);
+    cameraTorchButton.setAttribute("aria-pressed", String(torchEnabled));
+  } catch {
+    showUploadError("A lanterna não está disponível neste modo de câmera.");
+  }
+}
+
+async function setCameraMode(mode, restartCamera = true) {
+  if (mode === "video" && !window.MediaRecorder) {
+    showUploadError("A gravação de vídeo não está disponível neste navegador.");
+    return;
+  }
+  if (activeRecording) return;
+
+  cameraMode = mode;
+  cameraModeButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.cameraMode === cameraMode));
+  });
+  cameraCaptureButton.classList.toggle("is-video-mode", cameraMode === "video");
+  cameraCaptureButton.setAttribute("aria-label", cameraMode === "video" ? "Iniciar gravação" : "Capturar foto");
+
+  if (restartCamera && cameraStream) await startCamera();
+}
+
+function getSupportedRecordingMimeType() {
+  if (typeof MediaRecorder.isTypeSupported !== "function") return "";
+  const candidates = [
+    "video/mp4;codecs=h264,aac",
+    "video/mp4",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function updateRecordingClock(session) {
+  const elapsedSeconds = Math.min(
+    Math.floor((Date.now() - session.startedAt) / 1000),
+    maximumRecordingDuration / 1000,
+  );
+  const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
+  const seconds = String(elapsedSeconds % 60).padStart(2, "0");
+  recordingTime.textContent = `${minutes}:${seconds}`;
+}
+
+function finishVideoRecording(session) {
+  clearRecordingTimers(session);
+  if (activeRecording === session) activeRecording = undefined;
+  resetRecordingInterface();
+  if (session.discard || session.chunks.length === 0) return;
+
+  const recorderType = session.recorder.mimeType || session.chunks[0]?.type || "video/webm";
+  const baseType = recorderType.split(";")[0] || "video/webm";
+  const blob = new Blob(session.chunks, { type: baseType });
+  if (blob.size === 0) {
+    showUploadError("A gravação ficou vazia. Tente novamente.");
+    return;
+  }
+  if (blob.size > 50 * 1024 * 1024) {
+    showUploadError("O vídeo ultrapassou 50 MB. Grave um trecho mais curto.");
+    return;
+  }
+
+  const capturedAt = Date.now();
+  const extension = baseType === "video/mp4" ? "mp4" : "webm";
+  capturedFiles.push(new File([blob], `video-${capturedAt}.${extension}`, {
+    type: baseType,
+    lastModified: capturedAt,
+  }));
+  renderSelectedFiles();
+  stopCamera();
+  setCameraMode("photo", false);
+  showToast("Vídeo pronto! Agora é só publicar na galeria.");
+}
+
+function startVideoRecording() {
+  if (!cameraStream || activeRecording) return;
+  try {
+    const mimeType = getSupportedRecordingMimeType();
+    const recorder = mimeType
+      ? new MediaRecorder(cameraStream, { mimeType, videoBitsPerSecond: 4_000_000 })
+      : new MediaRecorder(cameraStream);
+    const session = {
+      recorder,
+      chunks: [],
+      discard: false,
+      startedAt: Date.now(),
+      timer: undefined,
+      stopTimer: undefined,
+    };
+    activeRecording = session;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) session.chunks.push(event.data);
+    });
+    recorder.addEventListener("stop", () => finishVideoRecording(session), { once: true });
+    recorder.addEventListener("error", () => {
+      session.discard = true;
+      showUploadError("A gravação foi interrompida pelo aparelho.");
+    }, { once: true });
+    recorder.start(1000);
+    cameraRecording.hidden = false;
+    cameraCaptureButton.classList.add("is-recording");
+    cameraCaptureButton.setAttribute("aria-label", "Parar gravação");
+    cameraModeButtons.forEach((button) => {
+      button.disabled = true;
+    });
+    cameraSwitchButton.disabled = true;
+    updateRecordingClock(session);
+    session.timer = window.setInterval(() => updateRecordingClock(session), 250);
+    session.stopTimer = window.setTimeout(() => stopActiveRecording(true), maximumRecordingDuration);
+  } catch {
+    activeRecording = undefined;
+    resetRecordingInterface();
+    showUploadError("Não foi possível iniciar a gravação neste aparelho.");
   }
 }
 
@@ -279,6 +517,15 @@ async function captureCameraPhoto() {
   }
 }
 
+function handleCameraCapture() {
+  if (cameraMode === "video") {
+    if (activeRecording) stopActiveRecording(true);
+    else startVideoRecording();
+    return;
+  }
+  captureCameraPhoto();
+}
+
 function updateGalleryVisibility() {
   const cards = Array.from(memoryGrid.querySelectorAll("[data-memory-category]"));
   let visibleCount = 0;
@@ -303,6 +550,7 @@ function setActiveFilter(filter) {
 
 function closeUploadDialog() {
   stopCamera();
+  setCameraMode("photo", false);
   if (!uploadDialog.open) return;
   uploadDialog.close();
   uploadForm.reset();
@@ -545,12 +793,23 @@ document.querySelectorAll("[data-filter]").forEach((button) => {
 
 fileInput.addEventListener("change", renderSelectedFiles);
 cameraLaunchButton.addEventListener("click", startCamera);
-cameraCaptureButton.addEventListener("click", captureCameraPhoto);
+cameraCaptureButton.addEventListener("click", handleCameraCapture);
 cameraSwitchButton.addEventListener("click", async () => {
   cameraFacingMode = cameraFacingMode === "environment" ? "user" : "environment";
   await startCamera();
 });
 cameraCloseButton.addEventListener("click", stopCamera);
+cameraZoomInput.addEventListener("input", applyCameraZoom);
+cameraTorchButton.addEventListener("click", toggleCameraTorch);
+cameraModeButtons.forEach((button) => {
+  if (button.dataset.cameraMode === "video" && !window.MediaRecorder) {
+    button.disabled = true;
+    button.title = "Gravação indisponível neste navegador";
+  }
+  button.addEventListener("click", async () => {
+    await setCameraMode(button.dataset.cameraMode);
+  });
+});
 
 uploadForm.addEventListener("submit", (event) => {
   event.preventDefault();
