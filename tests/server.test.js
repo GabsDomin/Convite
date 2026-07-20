@@ -49,9 +49,13 @@ before(async () => {
       SUPABASE_SECRET_KEY: "sb_secret_test_secret",
       MERCADO_PAGO_ACCESS_TOKEN: "TEST-token-sem-webhook",
       MERCADO_PAGO_WEBHOOK_SECRET: "",
-      CLOUDINARY_CLOUD_NAME: "cloud-test",
-      CLOUDINARY_API_KEY: "api-key-test",
-      CLOUDINARY_API_SECRET: "api-secret-test",
+      R2_ACCOUNT_ID: "account-test",
+      R2_ACCESS_KEY_ID: "r2-access-key-test",
+      R2_SECRET_ACCESS_KEY: "r2-secret-key-test",
+      R2_BUCKET_NAME: "gab-naia-album",
+      R2_PUBLIC_BASE_URL: "https://media.example.com",
+      ALBUM_UPLOAD_SIGNING_SECRET: "album-test-signing-secret-with-32-characters",
+      ALBUM_UPLOAD_CODE: "2811",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -104,10 +108,10 @@ test("configuração pública não contém segredos", async () => {
     albumConfigured: true,
   });
   assert.equal(JSON.stringify(payload).includes("sb_secret_test_secret"), false);
-  assert.equal(JSON.stringify(payload).includes("api-secret-test"), false);
+  assert.equal(JSON.stringify(payload).includes("r2-secret-key-test"), false);
 });
 
-test("assinatura do upload é curta, vinculada a um arquivo e não expõe segredo", async () => {
+test("URL do R2 é temporária, vinculada a um arquivo e não expõe segredo", async () => {
   const response = await fetch(`${baseUrl}/api/album/upload-signature`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -117,40 +121,57 @@ test("assinatura do upload é curta, vinculada a um arquivo e não expõe segred
       fileName: "foto.jpg",
       fileType: "image/jpeg",
       fileSize: 8_000_000,
+      accessCode: "2811",
     }),
   });
   const payload = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(payload.cloudName, "cloud-test");
-  assert.equal(payload.apiKey, "api-key-test");
-  assert.match(payload.publicId, /^gab-naia\/album\/[a-f0-9-]+$/);
-  assert.match(payload.signature, /^[a-f0-9]{40}$/);
-  assert.equal(payload.maxFileBytes, 100 * 1024 * 1024);
-  assert.equal(JSON.stringify(payload).includes("api-secret-test"), false);
+  assert.match(payload.storageKey, /^gab-naia\/album\/originals\/[a-f0-9-]+\.jpg$/);
+  assert.match(payload.uploadUrl, /^https:\/\/account-test\.r2\.cloudflarestorage\.com\/gab-naia-album\//);
+  assert.match(payload.uploadUrl, /X-Amz-Signature=/);
+  assert.doesNotMatch(payload.uploadUrl, /x-amz-checksum/i);
+  assert.match(payload.uploadToken, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  assert.deepEqual(payload.headers, {
+    "Content-Type": "image/jpeg",
+    "Cache-Control": "public, max-age=31536000, immutable",
+  });
+  assert.equal(payload.maxFileBytes, 500 * 1024 * 1024);
+  assert.equal(JSON.stringify(payload).includes("r2-secret-key-test"), false);
+  assert.equal(JSON.stringify(payload).includes("album-test-signing-secret"), false);
 });
 
-test("registro do álbum rejeita resposta de armazenamento adulterada", async () => {
-  const response = await fetch(`${baseUrl}/api/album/media`, {
+test("criação de upload exige o código privado do álbum", async () => {
+  const response = await fetch(`${baseUrl}/api/album/upload-signature`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       guestName: "Pessoa Teste",
       category: "Festa",
-      publicId: "gab-naia/album/00000000-0000-4000-8000-000000000000",
-      resourceType: "image",
-      format: "jpg",
-      version: 123456789,
-      bytes: 8_000_000,
-      width: 3024,
-      height: 4032,
-      signature: "0".repeat(40),
+      fileName: "foto.jpg",
+      fileType: "image/jpeg",
+      fileSize: 8_000_000,
+      accessCode: "0000",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 403);
+  assert.match(payload.error, /código do álbum incorreto/i);
+});
+
+test("registro do álbum rejeita autorização de upload adulterada", async () => {
+  const response = await fetch(`${baseUrl}/api/album/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      uploadToken: "autorizacao.adulterada",
     }),
   });
   const payload = await response.json();
 
   assert.equal(response.status, 401);
-  assert.match(payload.error, /não autenticada/i);
+  assert.match(payload.error, /autorização de upload inválida/i);
 });
 
 test("rejeita origem externa, entrada inválida e corpo excessivo", async () => {
@@ -271,18 +292,23 @@ test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa 
   assert.match(index, /href="\/album"[^>]*>Conhecer o álbum coletivo</i);
   assert.match(album, /Os novos envios aparecem imediatamente, sem fila de aprovação\./i);
   assert.match(albumScript, /Os envios desta tela ficam somente neste navegador/i);
-  assert.match(album, /Até 10 arquivos · fotos e vídeos de até 100 MB cada · originais preservados/i);
+  assert.match(album, /Até 10 arquivos · fotos e vídeos de até 500 MB cada · backup automático dos originais/i);
+  assert.match(album, /data-album-code-field/);
   assert.match(album, /data-upload-progress/);
   assert.match(albumScript, /memoryGrid\.prepend\(fragment\)/);
   assert.match(albumScript, /URL\.createObjectURL\(file\)/);
   assert.match(albumScript, /\/api\/album\/upload-signature/);
   assert.match(albumScript, /new XMLHttpRequest\(\)/);
-  assert.match(albumScript, /formData\.append\("file", file\)/);
-  assert.match(albumScript, /maximumAlbumFileSize = 100 \* 1024 \* 1024/);
-  assert.match(server, /https:\/\/api\.cloudinary\.com\/v1_1/);
-  assert.match(server, /createCloudinarySignature/);
-  assert.match(server, /Resposta do armazenamento não autenticada/);
+  assert.match(albumScript, /xhr\.open\("PUT", upload\.uploadUrl\)/);
+  assert.match(albumScript, /xhr\.send\(file\)/);
+  assert.match(albumScript, /maximumAlbumFileSize = 500 \* 1024 \* 1024/);
+  assert.match(server, /new PutObjectCommand/);
+  assert.match(server, /new HeadObjectCommand/);
+  assert.match(server, /createAlbumUploadToken/);
+  assert.match(server, /Autorização de upload inválida/);
   assert.match(albumSchema, /create table if not exists public\.album_media/i);
+  assert.match(albumSchema, /storage_provider text not null default 'r2'/i);
+  assert.match(albumSchema, /backup_status text not null default 'pending'/i);
   assert.match(albumSchema, /revoke all on table public\.album_media from anon, authenticated/i);
   assert.match(album, /Stories dos convidados/i);
   assert.match(album, /data-hero-carousel/);

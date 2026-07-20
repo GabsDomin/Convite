@@ -174,6 +174,18 @@
           </select>
         </label>
 
+        <label data-album-code-field hidden>
+          Código do álbum
+          <input
+            name="accessCode"
+            type="password"
+            maxlength="32"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="Informe o código disponível na festa"
+          />
+        </label>
+
         <div class="camera-entry">
           <button class="camera-launch" type="button" data-open-camera>
             <span class="camera-launch-icon" aria-hidden="true">
@@ -243,13 +255,13 @@
           <input
             name="memories"
             type="file"
-            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/webm"
+            accept="image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif,video/mp4,video/quicktime,video/webm"
             multiple
             data-memory-files
           />
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14" /></svg>
           <strong>Escolher fotos e vídeos</strong>
-          <span>Até 10 arquivos · fotos e vídeos de até 100 MB cada · originais preservados</span>
+          <span>Até 10 arquivos · fotos e vídeos de até 500 MB cada · backup automático dos originais</span>
         </label>
 
         <div class="selected-files" data-selected-files aria-live="polite"></div>

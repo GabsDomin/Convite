@@ -21,11 +21,19 @@ SUPABASE_SECRET_KEY=sb_secret_...
 MERCADO_PAGO_ACCESS_TOKEN=...
 MERCADO_PAGO_WEBHOOK_SECRET=...
 SITE_URL=https://gab-naia.online
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET_NAME=gab-naia-album
+R2_PUBLIC_BASE_URL=https://media.gab-naia.online
+R2_IMAGE_TRANSFORM_BASE_URL=https://media.gab-naia.online
+ALBUM_UPLOAD_SIGNING_SECRET=...
+ALBUM_UPLOAD_CODE=...
 ```
 
 `BACKEND_URL` é opcional. Ele só é necessário se a API ficar em outro domínio; nesse projeto, deixe sem cadastrar porque o backend usa o mesmo `SITE_URL`.
 
-Segredos como `SUPABASE_SECRET_KEY`, `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_WEBHOOK_SECRET` ficam somente no servidor. Nunca use prefixos públicos como `NEXT_PUBLIC_`, `VITE_` ou `PUBLIC_` nessas variáveis. A variável antiga `SUPABASE_SERVICE_ROLE_KEY` continua aceita apenas para compatibilidade.
+Segredos como `SUPABASE_SECRET_KEY`, `MERCADO_PAGO_ACCESS_TOKEN`, `MERCADO_PAGO_WEBHOOK_SECRET`, `R2_SECRET_ACCESS_KEY` e `ALBUM_UPLOAD_SIGNING_SECRET` ficam somente no servidor. Nunca use prefixos públicos como `NEXT_PUBLIC_`, `VITE_` ou `PUBLIC_` nessas variáveis. A variável antiga `SUPABASE_SERVICE_ROLE_KEY` continua aceita apenas para compatibilidade.
 
 ## Banco de dados
 
@@ -37,6 +45,7 @@ supabase-functions.sql
 supabase-payments.sql
 supabase-restricted-guests.sql
 supabase-rsvp-guests.sql
+supabase-album-schema.sql
 ```
 
 Os scripts são reaplicáveis e restringem tabelas e funções à `service_role`. O navegador não recebe uma chave do Supabase.
@@ -60,6 +69,16 @@ mas uma pessoa pode informar o nome do companheiro ou companheira. Pais e
 responsáveis podem cadastrar até seis menores de 18 anos, sempre informando o nome
 de cada um. O banco impede nomes repetidos na mesma confirmação e mantém as
 variações da lista restrita funcionando para todas as pessoas informadas.
+
+## Álbum coletivo
+
+Os convidados enviam os arquivos diretamente para o Cloudflare R2. A API verifica
+o arquivo antes de registrá-lo no Supabase, e um Worker copia o original para uma
+pasta privada do Google Drive. A fila possui repetição automática e a tabela
+`album_media` registra o estado de cada backup.
+
+O passo a passo completo de criação do bucket, CORS, domínio de mídia, OAuth do
+Google Drive, filas e Worker está em [`docs/album-storage-setup.md`](docs/album-storage-setup.md).
 
 ## Mercado Pago
 

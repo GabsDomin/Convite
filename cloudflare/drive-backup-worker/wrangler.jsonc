@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gab-naia-drive-backup",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-20",
+  "observability": {
+    "enabled": true
+  },
+  "r2_buckets": [
+    {
+      "binding": "ALBUM_BUCKET",
+      "bucket_name": "gab-naia-album"
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "gab-naia-drive-backup",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "gab-naia-drive-backup-dead"
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  }
+}

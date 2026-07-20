@@ -867,6 +867,7 @@ dialog::backdrop {
 }
 
 .upload-form input[type="text"],
+.upload-form input[type="password"],
 .upload-form select {
   width: 100%;
   min-height: 3.2rem;

@@ -1,15 +1,17 @@
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(__dirname);
 const assetsRoot = resolve(root, "assets");
 const port = Number(process.env.PORT || 3000);
 const maxJsonBodyBytes = 64 * 1024;
-const maxAlbumFileBytes = 100 * 1024 * 1024;
+const maxAlbumFileBytes = 500 * 1024 * 1024;
 const rateLimitStore = new Map();
 
 class HttpError extends Error {
@@ -34,20 +36,61 @@ const supabaseSecretKey = firstEnv("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE
 const mercadoPagoAccessToken = firstEnv("MERCADO_PAGO_ACCESS_TOKEN", "MP_ACCESS_TOKEN");
 const mercadoPagoWebhookSecret = firstEnv("MERCADO_PAGO_WEBHOOK_SECRET");
 const cloudinaryCloudName = firstEnv("CLOUDINARY_CLOUD_NAME");
-const cloudinaryApiKey = firstEnv("CLOUDINARY_API_KEY");
-const cloudinaryApiSecret = firstEnv("CLOUDINARY_API_SECRET");
+const r2AccountId = firstEnv("R2_ACCOUNT_ID");
+const r2AccessKeyId = firstEnv("R2_ACCESS_KEY_ID");
+const r2SecretAccessKey = firstEnv("R2_SECRET_ACCESS_KEY");
+const r2BucketName = firstEnv("R2_BUCKET_NAME");
+const r2PublicBaseUrl = firstEnv("R2_PUBLIC_BASE_URL").replace(/\/+$/, "");
+const r2ImageTransformBaseUrl = firstEnv("R2_IMAGE_TRANSFORM_BASE_URL").replace(/\/+$/, "");
+const albumUploadSigningSecret = firstEnv("ALBUM_UPLOAD_SIGNING_SECRET");
+const albumUploadCode = firstEnv("ALBUM_UPLOAD_CODE");
 const siteUrl = firstEnv("SITE_URL", "FRONTEND_URL", "PUBLIC_FRONTEND_URL").replace(/\/+$/, "");
 const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL").replace(/\/+$/, "");
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseSecretKey);
 const hasMercadoPagoConfig = Boolean(mercadoPagoAccessToken && mercadoPagoWebhookSecret);
-const hasCloudinaryConfig = Boolean(cloudinaryCloudName && cloudinaryApiKey && cloudinaryApiSecret);
-const hasAlbumConfig = hasSupabaseConfig && hasCloudinaryConfig;
+const hasCloudinaryConfig = Boolean(cloudinaryCloudName);
+const hasR2Config = Boolean(
+  r2AccountId
+  && r2AccessKeyId
+  && r2SecretAccessKey
+  && r2BucketName
+  && r2PublicBaseUrl
+  && albumUploadSigningSecret.length >= 32
+);
+const hasAlbumConfig = hasSupabaseConfig && hasR2Config;
 const mercadoPagoMode = mercadoPagoAccessToken.startsWith("TEST-") ? "sandbox" : "production";
 const guestNotInvitedMessage = "Infelizmente, seu nome não está na lista de convidados.";
 const albumCategories = new Set(["Preparativos", "Cerimônia", "Jantar", "Festa"]);
-const albumImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+const albumImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif", "image/heic", "image/heif"]);
 const albumVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
-const albumPublicIdPrefix = "gab-naia/album/";
+const albumR2KeyPrefix = "gab-naia/album/originals/";
+const albumUploadUrlTtlSeconds = 30 * 60;
+const albumMediaSelect = "id,guest_name,category,storage_provider,storage_key,public_id,resource_type,mime_type,format,version,bytes,width,height,duration,backup_status,created_at";
+const albumFileExtensions = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+  ["image/avif", "avif"],
+  ["image/heic", "heic"],
+  ["image/heif", "heif"],
+  ["video/mp4", "mp4"],
+  ["video/quicktime", "mov"],
+  ["video/webm", "webm"],
+]);
+
+const r2Client = hasR2Config
+  ? new S3Client({
+      region: "auto",
+      endpoint: `https://${r2AccountId}.r2.cloudflarestorage.com`,
+      forcePathStyle: true,
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
+      credentials: {
+        accessKeyId: r2AccessKeyId,
+        secretAccessKey: r2SecretAccessKey,
+      },
+    })
+  : null;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -107,7 +150,7 @@ const securityHeaders = {
     "font-src https://fonts.gstatic.com",
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob: https:",
-    "connect-src 'self' https://api.cloudinary.com",
+    "connect-src 'self' https:",
     "object-src 'none'",
     "base-uri 'none'",
     "frame-ancestors 'none'",
@@ -330,6 +373,15 @@ function requireAlbumCategory(value) {
   return category;
 }
 
+function requireAlbumAccessCode(value) {
+  if (!albumUploadCode) return;
+  const expected = Buffer.from(albumUploadCode, "utf8");
+  const received = Buffer.from(String(value || "").trim(), "utf8");
+  if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+    throw new HttpError(403, "Código do álbum incorreto.");
+  }
+}
+
 function requireAlbumFile(value) {
   const fileName = requireText(value?.fileName, "Nome do arquivo", { min: 1, max: 180 });
   const fileType = String(value?.fileType ?? "").trim().toLowerCase();
@@ -345,62 +397,110 @@ function requireAlbumFile(value) {
     throw new HttpError(400, "Tamanho de arquivo inválido.");
   }
   if (fileSize > maxAlbumFileBytes) {
-    throw new HttpError(413, "O arquivo ultrapassa o limite de 100 MB.");
+    throw new HttpError(413, "O arquivo ultrapassa o limite de 500 MB.");
   }
 
   return { fileName, fileType, fileSize, resourceType };
 }
 
-function createCloudinarySignature(parameters) {
-  const serialized = Object.entries(parameters)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(",") : value}`)
-    .join("&");
-  return createHash("sha1").update(`${serialized}${cloudinaryApiSecret}`).digest("hex");
+function createAlbumUploadToken(payload) {
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", albumUploadSigningSecret)
+    .update(encodedPayload)
+    .digest("base64url");
+  return `${encodedPayload}.${signature}`;
 }
 
-function signaturesMatch(expected, received) {
-  if (!/^[a-f0-9]{40}$/i.test(String(received || ""))) return false;
-  const expectedBuffer = Buffer.from(expected, "hex");
-  const receivedBuffer = Buffer.from(String(received), "hex");
-  return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer);
+function requireAlbumUploadToken(value) {
+  const token = String(value || "");
+  const [encodedPayload, receivedSignature, ...extraParts] = token.split(".");
+  if (!encodedPayload || !receivedSignature || extraParts.length) {
+    throw new HttpError(401, "Autorização de upload inválida.");
+  }
+
+  const expectedSignature = createHmac("sha256", albumUploadSigningSecret)
+    .update(encodedPayload)
+    .digest();
+  let receivedBuffer;
+  try {
+    receivedBuffer = Buffer.from(receivedSignature, "base64url");
+  } catch {
+    throw new HttpError(401, "Autorização de upload inválida.");
+  }
+  if (receivedBuffer.length !== expectedSignature.length || !timingSafeEqual(receivedBuffer, expectedSignature)) {
+    throw new HttpError(401, "Autorização de upload inválida.");
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+  } catch {
+    throw new HttpError(401, "Autorização de upload inválida.");
+  }
+
+  if (!Number.isSafeInteger(payload.expiresAt) || payload.expiresAt < Date.now()) {
+    throw new HttpError(401, "A autorização do upload expirou. Envie o arquivo novamente.");
+  }
+  if (!String(payload.storageKey || "").startsWith(albumR2KeyPrefix)) {
+    throw new HttpError(401, "Destino do upload inválido.");
+  }
+
+  const file = requireAlbumFile(payload);
+  return {
+    ...file,
+    guestName: requireText(payload.guestName, "Nome", { min: 2, max: 80 }),
+    category: requireAlbumCategory(payload.category),
+    storageKey: String(payload.storageKey),
+  };
 }
 
-function requireCloudinaryUploadResult(body) {
-  const publicId = String(body.publicId ?? "").trim();
-  const version = Number(body.version);
-  const signature = String(body.signature ?? "").trim();
-  const resourceType = String(body.resourceType ?? "").trim();
-  const format = String(body.format ?? "").trim().toLowerCase();
-  const bytes = Number(body.bytes);
-  const width = body.width == null ? null : Number(body.width);
-  const height = body.height == null ? null : Number(body.height);
-  const duration = body.duration == null ? null : Number(body.duration);
-
-  if (!publicId.startsWith(albumPublicIdPrefix) || !/^[a-zA-Z0-9/_-]+$/.test(publicId)) {
-    throw new HttpError(400, "Identificador do arquivo inválido.");
-  }
-  if (!Number.isSafeInteger(version) || version <= 0) throw new HttpError(400, "Versão do arquivo inválida.");
-  if (!signaturesMatch(createCloudinarySignature({ public_id: publicId, version }), signature)) {
-    throw new HttpError(401, "Resposta do armazenamento não autenticada.");
-  }
-  if (!(["image", "video"].includes(resourceType))) throw new HttpError(400, "Tipo de mídia inválido.");
-  if (!/^[a-z0-9]{2,12}$/.test(format)) throw new HttpError(400, "Formato de mídia inválido.");
-  if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > maxAlbumFileBytes) {
-    throw new HttpError(400, "Tamanho de mídia inválido.");
-  }
-  if (width != null && (!Number.isSafeInteger(width) || width <= 0 || width > 32_000)) {
-    throw new HttpError(400, "Largura da mídia inválida.");
-  }
-  if (height != null && (!Number.isSafeInteger(height) || height <= 0 || height > 32_000)) {
-    throw new HttpError(400, "Altura da mídia inválida.");
-  }
+function validateAlbumMediaMeasurements(body) {
+  const parseInteger = (value, label) => {
+    if (value == null || value === "") return null;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 32_000) {
+      throw new HttpError(400, `${label} inválida.`);
+    }
+    return parsed;
+  };
+  const width = parseInteger(body.width, "Largura");
+  const height = parseInteger(body.height, "Altura");
+  const duration = body.duration == null || body.duration === "" ? null : Number(body.duration);
   if (duration != null && (!Number.isFinite(duration) || duration < 0 || duration > 3600)) {
-    throw new HttpError(400, "Duração da mídia inválida.");
+    throw new HttpError(400, "Duração inválida.");
+  }
+  return { width, height, duration };
+}
+
+async function requireR2UploadResult(body) {
+  const upload = requireAlbumUploadToken(body.uploadToken);
+  let storedObject;
+  try {
+    storedObject = await r2Client.send(new HeadObjectCommand({
+      Bucket: r2BucketName,
+      Key: upload.storageKey,
+    }));
+  } catch (error) {
+    if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NotFound") {
+      throw new HttpError(409, "O arquivo ainda não chegou ao armazenamento.");
+    }
+    throw error;
   }
 
-  return { publicId, version, resourceType, format, bytes, width, height, duration };
+  if (Number(storedObject.ContentLength) !== upload.fileSize) {
+    throw new HttpError(409, "O tamanho recebido não corresponde ao arquivo enviado.");
+  }
+  const storedContentType = String(storedObject.ContentType || "").split(";")[0].trim().toLowerCase();
+  if (storedContentType && storedContentType !== upload.fileType) {
+    throw new HttpError(409, "O formato recebido não corresponde ao arquivo enviado.");
+  }
+
+  return {
+    ...upload,
+    ...validateAlbumMediaMeasurements(body),
+    etag: String(storedObject.ETag || "").replace(/^\"|\"$/g, "") || null,
+    format: albumFileExtensions.get(upload.fileType),
+  };
 }
 
 function buildCloudinaryUrl(media, transformation = "", outputFormat = media.format) {
@@ -412,7 +512,46 @@ function buildCloudinaryUrl(media, transformation = "", outputFormat = media.for
   return `https://res.cloudinary.com/${encodeURIComponent(cloudinaryCloudName)}/${media.resource_type}/upload/${transformPath}v${media.version}/${publicId}.${outputFormat}`;
 }
 
+function buildR2PublicUrl(storageKey) {
+  const encodedKey = String(storageKey)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${r2PublicBaseUrl}/${encodedKey}`;
+}
+
+function buildR2ImageUrl(sourceUrl, transformation) {
+  if (!r2ImageTransformBaseUrl) return sourceUrl;
+  return `${r2ImageTransformBaseUrl}/cdn-cgi/image/${transformation}/${sourceUrl}`;
+}
+
 function normalizeAlbumMedia(media) {
+  if (media.storage_provider === "r2" || media.storage_key) {
+    const isVideo = media.resource_type === "video";
+    const originalUrl = buildR2PublicUrl(media.storage_key);
+    return {
+      id: media.id,
+      guestName: media.guest_name,
+      category: media.category,
+      resourceType: media.resource_type,
+      mimeType: media.mime_type,
+      bytes: Number(media.bytes),
+      width: media.width == null ? null : Number(media.width),
+      height: media.height == null ? null : Number(media.height),
+      duration: media.duration == null ? null : Number(media.duration),
+      originalUrl,
+      displayUrl: isVideo
+        ? originalUrl
+        : buildR2ImageUrl(originalUrl, "width=2400,fit=scale-down,quality=90,format=auto"),
+      thumbnailUrl: isVideo
+        ? null
+        : buildR2ImageUrl(originalUrl, "width=900,height=1200,fit=cover,quality=82,format=auto"),
+      backupStatus: media.backup_status || "pending",
+      createdAt: media.created_at,
+    };
+  }
+
+  if (!hasCloudinaryConfig) return null;
   const isVideo = media.resource_type === "video";
   return {
     id: media.id,
@@ -705,63 +844,96 @@ async function handleApi(request, response, pathname) {
     if (request.method === "GET" && pathname === "/api/album/media") {
       enforceRateLimit(request, "album-media", 120, 60_000);
       if (!hasAlbumConfig) {
-        sendJson(response, 200, { configured: false, media: [], maxFileBytes: maxAlbumFileBytes });
+        sendJson(response, 200, {
+          configured: false,
+          media: [],
+          maxFileBytes: maxAlbumFileBytes,
+          uploadCodeRequired: Boolean(albumUploadCode),
+        });
         return true;
       }
       const media = await readSupabaseTable(
-        "album_media?select=id,guest_name,category,public_id,resource_type,format,version,bytes,width,height,duration,created_at&order=created_at.desc&limit=200",
+        `album_media?select=${albumMediaSelect}&order=created_at.desc&limit=500`,
       );
       sendJson(response, 200, {
         configured: true,
-        media: media.map(normalizeAlbumMedia),
+        media: media.map(normalizeAlbumMedia).filter(Boolean),
         maxFileBytes: maxAlbumFileBytes,
+        uploadCodeRequired: Boolean(albumUploadCode),
       });
       return true;
     }
 
     if (request.method === "POST" && pathname === "/api/album/upload-signature") {
       validateSameOriginRequest(request);
-      enforceRateLimit(request, "album-signature", 30, 10 * 60_000);
+      enforceRateLimit(request, "album-signature", 600, 10 * 60_000);
       if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
       const body = await readJsonBody(request);
+      requireAlbumAccessCode(body.accessCode);
       const guestName = requireText(body.guestName, "Nome", { min: 2, max: 80 });
       const category = requireAlbumCategory(body.category);
       const file = requireAlbumFile(body);
-      const timestamp = Math.floor(Date.now() / 1000);
-      const publicId = `${albumPublicIdPrefix}${randomUUID()}`;
-      const signature = createCloudinarySignature({ public_id: publicId, timestamp });
+      const storageKey = `${albumR2KeyPrefix}${randomUUID()}.${albumFileExtensions.get(file.fileType)}`;
+      const expiresAt = Date.now() + albumUploadUrlTtlSeconds * 1000;
+      const uploadToken = createAlbumUploadToken({
+        ...file,
+        guestName,
+        category,
+        storageKey,
+        expiresAt,
+      });
+      const uploadUrl = await getSignedUrl(
+        r2Client,
+        new PutObjectCommand({
+          Bucket: r2BucketName,
+          Key: storageKey,
+          ContentType: file.fileType,
+          CacheControl: "public, max-age=31536000, immutable",
+        }),
+        { expiresIn: albumUploadUrlTtlSeconds },
+      );
       sendJson(response, 200, {
-        cloudName: cloudinaryCloudName,
-        apiKey: cloudinaryApiKey,
-        uploadUrl: `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudinaryCloudName)}/auto/upload`,
-        timestamp,
-        publicId,
-        signature,
+        uploadUrl,
+        uploadToken,
+        storageKey,
+        headers: {
+          "Content-Type": file.fileType,
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
         maxFileBytes: maxAlbumFileBytes,
-        uploadContext: { guestName, category, resourceType: file.resourceType },
+        expiresAt,
       });
       return true;
     }
 
     if (request.method === "POST" && pathname === "/api/album/media") {
       validateSameOriginRequest(request);
-      enforceRateLimit(request, "album-register", 30, 10 * 60_000);
+      enforceRateLimit(request, "album-register", 600, 10 * 60_000);
       if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
       const body = await readJsonBody(request);
-      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 80 });
-      const category = requireAlbumCategory(body.category);
-      const upload = requireCloudinaryUploadResult(body);
+      const upload = await requireR2UploadResult(body);
+      const existing = await readSupabaseTable(
+        `album_media?select=${albumMediaSelect}&storage_key=eq.${encodeURIComponent(upload.storageKey)}&limit=1`,
+      );
+      if (existing?.[0]) {
+        sendJson(response, 200, { media: normalizeAlbumMedia(existing[0]) });
+        return true;
+      }
       const inserted = await insertSupabaseTable("album_media", {
-        guest_name: guestName,
-        category,
-        public_id: upload.publicId,
+        guest_name: upload.guestName,
+        category: upload.category,
+        storage_provider: "r2",
+        storage_key: upload.storageKey,
+        original_file_name: upload.fileName,
         resource_type: upload.resourceType,
+        mime_type: upload.fileType,
         format: upload.format,
-        version: upload.version,
-        bytes: upload.bytes,
+        bytes: upload.fileSize,
         width: upload.width,
         height: upload.height,
         duration: upload.duration,
+        etag: upload.etag,
+        backup_status: "pending",
       });
       if (!inserted?.[0]) throw new Error("O Supabase não retornou a memória salva.");
       sendJson(response, 201, { media: normalizeAlbumMedia(inserted[0]) });

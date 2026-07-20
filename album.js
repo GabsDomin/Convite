@@ -51,12 +51,13 @@ const uploadProgressLabel = document.querySelector("[data-upload-progress-label]
 const uploadProgressValue = document.querySelector("[data-upload-progress-value]");
 const uploadProgressBar = document.querySelector("[data-upload-progress-bar]");
 const uploadSubmitButton = document.querySelector("[data-upload-submit]");
+const albumCodeField = document.querySelector("[data-album-code-field]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const activeObjectUrls = new Set();
 const capturedFiles = [];
-const maximumAlbumFileSize = 100 * 1024 * 1024;
+const maximumAlbumFileSize = 500 * 1024 * 1024;
 const storyGroups = new Map([
   ["Gabriel", {
     slides: [
@@ -254,7 +255,7 @@ function validateFiles(files) {
     const isImage = allowedImageTypes.has(file.type);
     const isVideo = allowedVideoTypes.has(file.type);
     if (!isImage && !isVideo) return `O arquivo “${file.name}” não possui um formato permitido.`;
-    if (file.size > maximumAlbumFileSize) return `O arquivo “${file.name}” ultrapassa 100 MB.`;
+    if (file.size > maximumAlbumFileSize) return `O arquivo “${file.name}” ultrapassa 500 MB.`;
   }
 
   return "";
@@ -594,7 +595,7 @@ function finishVideoRecording(session) {
     return;
   }
   if (blob.size > maximumAlbumFileSize) {
-    showUploadError("O vídeo ultrapassou 100 MB. Grave um trecho mais curto.");
+    showUploadError("O vídeo ultrapassou 500 MB. Grave um trecho mais curto.");
     return;
   }
 
@@ -1257,14 +1258,16 @@ function showLocalAlbumStatus(message = "O armazenamento online ainda não foi c
 async function initializeAlbumStorage() {
   try {
     const payload = await requestAlbumJson("/api/album/media");
+    albumCodeField.hidden = !payload.uploadCodeRequired;
+    albumCodeField.querySelector("input").required = Boolean(payload.uploadCodeRequired);
     if (!payload.configured) {
       showLocalAlbumStatus();
       return;
     }
 
     albumStorageConfigured = true;
-    albumStatusLabel.textContent = "Originais preservados";
-    albumStatusCopy.textContent = "Fotos e vídeos ficam salvos no álbum e aparecem para todos os convidados.";
+    albumStatusLabel.textContent = "Memórias protegidas";
+    albumStatusCopy.textContent = "Fotos e vídeos aparecem para todos e recebem backup automático dos originais.";
     albumStatus.classList.add("is-online");
     memoryGrid.querySelectorAll("[data-demo-memory]").forEach((card) => card.remove());
     const entries = payload.media.map((media) => ({
@@ -1284,64 +1287,49 @@ async function initializeAlbumStorage() {
   }
 }
 
-function uploadFileToCloudinary(file, upload, onProgress) {
+function uploadFileToR2(file, upload, onProgress) {
   return new Promise((resolve, reject) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("api_key", upload.apiKey);
-    formData.append("timestamp", String(upload.timestamp));
-    formData.append("public_id", upload.publicId);
-    formData.append("signature", upload.signature);
-
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", upload.uploadUrl);
-    xhr.responseType = "json";
+    xhr.open("PUT", upload.uploadUrl);
+    Object.entries(upload.headers || {}).forEach(([name, value]) => {
+      xhr.setRequestHeader(name, value);
+    });
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) onProgress(event.loaded / event.total);
     });
     xhr.addEventListener("load", () => {
-      const payload = xhr.response || {};
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(1);
-        resolve(payload);
+        resolve();
         return;
       }
-      reject(new Error(payload.error?.message || "O armazenamento recusou o arquivo."));
+      reject(new Error("O armazenamento recusou o arquivo."));
     });
     xhr.addEventListener("error", () => reject(new Error("A conexão caiu durante o envio.")));
     xhr.addEventListener("abort", () => reject(new Error("O envio foi cancelado.")));
-    xhr.send(formData);
+    xhr.send(file);
   });
 }
 
-async function persistAlbumFile(file, guestName, category, onProgress) {
+async function persistAlbumFile(file, guestName, category, accessCode, onProgress) {
   const upload = await requestAlbumJson("/api/album/upload-signature", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       guestName,
       category,
+      accessCode,
       fileName: file.name,
       fileType: file.type,
       fileSize: file.size,
     }),
   });
-  const stored = await uploadFileToCloudinary(file, upload, onProgress);
+  await uploadFileToR2(file, upload, onProgress);
   const registered = await requestAlbumJson("/api/album/media", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      guestName,
-      category,
-      publicId: stored.public_id,
-      resourceType: stored.resource_type,
-      format: stored.format,
-      version: stored.version,
-      bytes: stored.bytes,
-      width: stored.width,
-      height: stored.height,
-      duration: stored.duration,
-      signature: stored.signature,
+      uploadToken: upload.uploadToken,
     }),
   });
   return {
@@ -1440,6 +1428,7 @@ uploadForm.addEventListener("submit", async (event) => {
   const formData = new FormData(uploadForm);
   const guestName = String(formData.get("guestName") || "").trim();
   const category = String(formData.get("category") || "");
+  const accessCode = String(formData.get("accessCode") || "").trim();
   if (guestName.length < 2) {
     showUploadError("Informe seu nome para publicar as memórias.");
     return;
@@ -1453,7 +1442,7 @@ uploadForm.addEventListener("submit", async (event) => {
     try {
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
-        const entry = await persistAlbumFile(file, guestName, category, (fileProgress) => {
+        const entry = await persistAlbumFile(file, guestName, category, accessCode, (fileProgress) => {
           const overallProgress = ((index + fileProgress) / files.length) * 100;
           setUploadProgress(overallProgress, `Enviando ${index + 1} de ${files.length}...`);
         });
