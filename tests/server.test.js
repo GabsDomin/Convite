@@ -111,6 +111,27 @@ test("rejeita origem externa, entrada inválida e corpo excessivo", async () => 
     body: JSON.stringify({ guestName: "x".repeat(70_000), partySize: "Somente eu" }),
   });
   assert.equal(oversized.status, 413);
+
+  const coupleWithoutName = await fetch(`${baseUrl}/api/rsvp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guestName: "Pessoa Teste", partySize: "Casal", additionalGuestNames: [] }),
+  });
+  assert.equal(coupleWithoutName.status, 400);
+
+  const minorsWithoutNames = await fetch(`${baseUrl}/api/rsvp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guestName: "Pessoa Teste", partySize: "Responsável e menores", additionalGuestNames: [] }),
+  });
+  assert.equal(minorsWithoutNames.status, 400);
+
+  const repeatedName = await fetch(`${baseUrl}/api/rsvp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guestName: "José Teste", partySize: "Casal", additionalGuestNames: ["Jose Teste"] }),
+  });
+  assert.equal(repeatedName.status, 400);
 });
 
 test("data exibida e contagem até meia-noite do casamento usam 2026", async () => {
@@ -155,6 +176,23 @@ test("detalhes apresentam cerimônia, jantar e programação sem traje ou padrin
   assert.match(html, /<h3>Jantar<\/h3>[\s\S]*?<strong>Após a cerimônia<\/strong>/);
   assert.match(html, /<h3>Programação<\/h3>[\s\S]*?<strong>Mais detalhes em breve<\/strong>/);
   assert.doesNotMatch(html, /11h30|Almoço|Traje|madrinhas|padrinhos/i);
+});
+
+test("confirmação diferencia indivíduo, casal e responsável com menores", async () => {
+  const [script, migration] = await Promise.all([
+    readFile(new URL("../script.js", import.meta.url), "utf8"),
+    readFile(new URL("../supabase-rsvp-guests.sql", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(script, /Somente minha presença/);
+  assert.match(script, /Eu e meu\/minha companheiro\(a\)/);
+  assert.match(script, /Eu e menor\(es\) sob minha responsabilidade/);
+  assert.match(script, /Adultos devem confirmar separadamente/);
+  assert.match(script, /getAll\("additionalGuestNames"\)/);
+  assert.doesNotMatch(script, /<option>Eu e meus filhos<\/option>/);
+  assert.match(migration, /add column if not exists additional_guest_names text\[\]/i);
+  assert.match(migration, /p_additional_guest_names text\[\] default/i);
+  assert.match(migration, /cardinality\(clean_additional_names\) <> 1/i);
 });
 
 test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", async () => {

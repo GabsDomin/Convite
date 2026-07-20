@@ -36,6 +36,7 @@ supabase-schema.sql
 supabase-functions.sql
 supabase-payments.sql
 supabase-restricted-guests.sql
+supabase-rsvp-guests.sql
 ```
 
 Os scripts são reaplicáveis e restringem tabelas e funções à `service_role`. O navegador não recebe uma chave do Supabase.
@@ -50,6 +51,15 @@ desmarque `active`.
 
 Quando um nome ativo dessa tabela tentar confirmar presença, nada será salvo e o
 site mostrará: “Infelizmente, seu nome não está na lista de convidados.”
+
+### Confirmação por casal ou com menores
+
+O arquivo `supabase-rsvp-guests.sql` atualiza as confirmações para três opções:
+individual, casal e responsável com menores. Cada adulto confirma separadamente,
+mas uma pessoa pode informar o nome do companheiro ou companheira. Pais e
+responsáveis podem cadastrar até seis menores de 18 anos, sempre informando o nome
+de cada um. O banco impede nomes repetidos na mesma confirmação e mantém as
+variações da lista restrita funcionando para todas as pessoas informadas.
 
 ## Mercado Pago
 

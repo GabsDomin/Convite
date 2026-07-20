@@ -236,7 +236,7 @@ function getSavedRsvp() {
   }
 }
 
-function saveRsvp(name, partySize) {
+function saveRsvp(name, partySize, additionalGuestNames = []) {
   const guestName = name.trim().replace(/\s+/g, " ");
   if (!guestName) return;
 
@@ -245,6 +245,7 @@ function saveRsvp(name, partySize) {
     JSON.stringify({
       name: guestName,
       partySize,
+      additionalGuestNames,
       confirmedAt: new Date().toISOString(),
     }),
   );
@@ -597,6 +598,73 @@ function showGuestNotInvited() {
   `);
 }
 
+function updateRsvpAddButton(form) {
+  const addButton = form.querySelector("[data-add-rsvp-guest]");
+  const partySize = form.querySelector("[data-rsvp-party-size]")?.value;
+  const guestCount = form.querySelectorAll('[name="additionalGuestNames"]').length;
+  if (!addButton) return;
+
+  addButton.hidden = partySize !== "Responsável e menores";
+  addButton.disabled = guestCount >= 6;
+  addButton.textContent = guestCount >= 6 ? "Limite de seis menores atingido" : "+ Adicionar outra criança";
+}
+
+function appendRsvpGuestField(form, { couple = false, removable = true } = {}) {
+  const fields = form.querySelector("[data-rsvp-guest-fields]");
+  if (!fields || fields.querySelectorAll('[name="additionalGuestNames"]').length >= 6) return;
+
+  const row = document.createElement("div");
+  row.className = "additional-guest-row";
+
+  const label = document.createElement("label");
+  const labelText = document.createElement("span");
+  labelText.textContent = couple ? "Nome do(a) companheiro(a)" : "Nome da criança";
+
+  const input = document.createElement("input");
+  input.name = "additionalGuestNames";
+  input.required = true;
+  input.autocomplete = "off";
+  input.placeholder = couple ? "Digite o nome completo" : "Digite o nome da criança";
+
+  label.append(labelText, input);
+  row.append(label);
+
+  if (removable) {
+    const removeButton = document.createElement("button");
+    removeButton.className = "remove-guest-button";
+    removeButton.type = "button";
+    removeButton.dataset.removeRsvpGuest = "";
+    removeButton.setAttribute("aria-label", "Remover este nome");
+    removeButton.textContent = "×";
+    row.append(removeButton);
+  }
+
+  fields.append(row);
+  updateRsvpAddButton(form);
+  input.focus();
+}
+
+function updateRsvpGuestFields(form) {
+  const partySize = form.querySelector("[data-rsvp-party-size]")?.value;
+  const container = form.querySelector("[data-rsvp-additional]");
+  const fields = form.querySelector("[data-rsvp-guest-fields]");
+  const helper = form.querySelector("[data-rsvp-helper]");
+  if (!container || !fields || !helper) return;
+
+  fields.replaceChildren();
+  container.hidden = partySize === "Somente eu";
+
+  if (partySize === "Casal") {
+    helper.textContent = "Um dos dois pode confirmar pelo casal. Informe o nome completo da outra pessoa.";
+    appendRsvpGuestField(form, { couple: true, removable: false });
+  } else if (partySize === "Responsável e menores") {
+    helper.textContent = "Inclua somente menores de 18 anos sob sua responsabilidade. Adultos devem confirmar separadamente.";
+    appendRsvpGuestField(form, { removable: false });
+  }
+
+  updateRsvpAddButton(form);
+}
+
 function openRsvpModal() {
   openModal(`
     <div class="modal-icon">
@@ -605,19 +673,26 @@ function openRsvpModal() {
       </svg>
     </div>
     <h2 id="modal-title">Confirmar presença</h2>
-    <p>Informe seu nome para confirmar sua presença no casamento.</p>
+    <p>Informe quem estará presente no casamento.</p>
+    <p class="rsvp-policy">Cada adulto confirma a própria presença. Para casais, uma pessoa pode confirmar pelo par. Pais ou responsáveis podem incluir menores de 18 anos.</p>
     <form data-rsvp-form>
       <label>
         Seu nome
         <input name="guestName" required autocomplete="name" placeholder="Digite seu nome" />
       </label>
       <label>
-        Quantidade de pessoas
-        <select name="partySize" required>
-          <option>Somente eu</option>
-          <option>Eu e meus filhos</option>
+        Tipo de confirmação
+        <select name="partySize" data-rsvp-party-size required>
+          <option value="Somente eu">Somente minha presença</option>
+          <option value="Casal">Eu e meu/minha companheiro(a)</option>
+          <option value="Responsável e menores">Eu e menor(es) sob minha responsabilidade</option>
         </select>
       </label>
+      <div class="rsvp-additional" data-rsvp-additional hidden>
+        <p class="rsvp-helper" data-rsvp-helper></p>
+        <div class="additional-guest-fields" data-rsvp-guest-fields></div>
+        <button class="add-guest-button" type="button" data-add-rsvp-guest>+ Adicionar outra criança</button>
+      </div>
       <div class="modal-actions">
         <button class="button secondary" type="button" data-close-modal>Cancelar</button>
         <button class="button primary" type="submit">Enviar</button>
@@ -680,6 +755,12 @@ function openGiftModal(gift) {
   `);
 }
 
+document.addEventListener("change", (event) => {
+  if (!event.target.matches("[data-rsvp-party-size]")) return;
+  const form = event.target.closest("[data-rsvp-form]");
+  if (form) updateRsvpGuestFields(form);
+});
+
 document.addEventListener("click", async (event) => {
   const closeButton = event.target.closest("[data-close-modal]");
   if (closeButton) {
@@ -694,6 +775,21 @@ document.addEventListener("click", async (event) => {
 
   if (event.target.matches("[data-open-rsvp]")) {
     openRsvpModal();
+    return;
+  }
+
+  const addRsvpGuestButton = event.target.closest("[data-add-rsvp-guest]");
+  if (addRsvpGuestButton) {
+    const form = addRsvpGuestButton.closest("[data-rsvp-form]");
+    if (form) appendRsvpGuestField(form);
+    return;
+  }
+
+  const removeRsvpGuestButton = event.target.closest("[data-remove-rsvp-guest]");
+  if (removeRsvpGuestButton) {
+    const form = removeRsvpGuestButton.closest("[data-rsvp-form]");
+    removeRsvpGuestButton.closest(".additional-guest-row")?.remove();
+    if (form) updateRsvpAddButton(form);
     return;
   }
 
@@ -748,15 +844,19 @@ document.addEventListener("submit", async (event) => {
     const formData = new FormData(rsvpForm);
     const guestName = String(formData.get("guestName") || "");
     const partySize = String(formData.get("partySize") || "");
+    const additionalGuestNames = formData
+      .getAll("additionalGuestNames")
+      .map((name) => String(name || "").trim())
+      .filter(Boolean);
 
     try {
       await requestJson("/api/rsvp", {
         method: "POST",
-        body: JSON.stringify({ guestName, partySize }),
+        body: JSON.stringify({ guestName, partySize, additionalGuestNames }),
       });
-      saveRsvp(guestName, partySize);
+      saveRsvp(guestName, partySize, additionalGuestNames);
       renderRsvpState();
-      showSuccess("Presença confirmada com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.");
+      showSuccess(`${additionalGuestNames.length ? "Presenças confirmadas" : "Presença confirmada"} com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.`);
     } catch (error) {
       if (error.code === "guest_not_invited") showGuestNotInvited();
       else showError(error.message);

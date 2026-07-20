@@ -5,16 +5,25 @@ import { test } from "node:test";
 const projectFile = (name) => readFile(new URL(`../${name}`, import.meta.url), "utf8");
 
 test("funções sensíveis do Supabase não são liberadas para clientes públicos", async () => {
-  const [functionsSql, paymentsSql, restrictedGuestsSql] = await Promise.all([
+  const [functionsSql, paymentsSql, restrictedGuestsSql, rsvpGuestsSql] = await Promise.all([
     projectFile("supabase-functions.sql"),
     projectFile("supabase-payments.sql"),
     projectFile("supabase-restricted-guests.sql"),
+    projectFile("supabase-rsvp-guests.sql"),
   ]);
-  const sql = `${functionsSql}\n${paymentsSql}\n${restrictedGuestsSql}`;
+  const sql = `${functionsSql}\n${paymentsSql}\n${restrictedGuestsSql}\n${rsvpGuestsSql}`;
 
   assert.doesNotMatch(sql, /grant\s+execute[^;]*\bto\s+(?:anon|authenticated)\b/i);
   assert.match(sql, /grant execute on function public\.confirm_mercadopago_payment[\s\S]*?to service_role/i);
   assert.match(sql, /revoke execute on function public\.confirm_mercadopago_payment[\s\S]*?from public, anon, authenticated/i);
+});
+
+test("migração de acompanhantes mantém a RPC restrita ao servidor", async () => {
+  const sql = await projectFile("supabase-rsvp-guests.sql");
+
+  assert.match(sql, /revoke execute on function public\.confirm_rsvp\(text, text, text\[\]\) from public, anon, authenticated/i);
+  assert.match(sql, /grant execute on function public\.confirm_rsvp\(text, text, text\[\]\) to service_role/i);
+  assert.match(sql, /restricted_guests[\s\S]*?additional_guest_names/i);
 });
 
 test("lista restrita é privada e bloqueia a confirmação antes de salvar", async () => {

@@ -968,6 +968,84 @@ svg {
   resize: vertical;
 }
 
+.rsvp-policy {
+  margin: 1rem 0 1.25rem;
+  border: 1px solid rgba(0, 63, 152, 0.16);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  color: var(--royal-dark) !important;
+  background: var(--mist);
+  font-size: 0.84rem;
+  line-height: 1.5 !important;
+  text-align: left !important;
+}
+
+.rsvp-additional[hidden],
+.add-guest-button[hidden] {
+  display: none;
+}
+
+.rsvp-additional {
+  margin-top: 1rem;
+  border-top: 1px solid rgba(0, 63, 152, 0.12);
+  padding-top: 0.25rem;
+}
+
+.rsvp-helper {
+  margin: 0.75rem 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: left !important;
+}
+
+.additional-guest-fields {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.additional-guest-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.55rem;
+}
+
+.additional-guest-row label {
+  margin-bottom: 0.35rem;
+}
+
+.remove-guest-button {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  margin-bottom: 0.35rem;
+  border: 1px solid rgba(0, 63, 152, 0.22);
+  border-radius: 8px;
+  color: var(--royal);
+  background: white;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.add-guest-button {
+  width: 100%;
+  min-height: 2.8rem;
+  margin-top: 0.55rem;
+  border: 1px dashed rgba(0, 63, 152, 0.42);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  color: var(--royal);
+  background: rgba(238, 242, 250, 0.64);
+  font-weight: 750;
+}
+
+.add-guest-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .optional-label {
   color: var(--muted);
   font-size: 0.78rem;

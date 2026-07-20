@@ -232,6 +232,47 @@ function requireText(value, label, { min = 1, max = 120 } = {}) {
   return text;
 }
 
+function normalizeGuestName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function validateAdditionalGuestNames(value, partySize, primaryGuestName) {
+  if (!Array.isArray(value)) {
+    throw new HttpError(400, "Lista de pessoas inválida.");
+  }
+  if (value.length > 6) {
+    throw new HttpError(400, "É possível incluir no máximo seis menores.");
+  }
+
+  const names = value.map((name) => requireText(name, "Nome da pessoa", { min: 2, max: 120 }));
+  const normalizedPrimaryName = normalizeGuestName(primaryGuestName);
+  const normalizedNames = names.map(normalizeGuestName);
+
+  if (normalizedNames.includes(normalizedPrimaryName)) {
+    throw new HttpError(400, "Não repita seu próprio nome na confirmação.");
+  }
+  if (new Set(normalizedNames).size !== normalizedNames.length) {
+    throw new HttpError(400, "Informe cada pessoa apenas uma vez.");
+  }
+
+  if (partySize === "Somente eu" && names.length !== 0) {
+    throw new HttpError(400, "A confirmação individual não deve incluir outros nomes.");
+  }
+  if (partySize === "Casal" && names.length !== 1) {
+    throw new HttpError(400, "Informe o nome do seu companheiro ou companheira.");
+  }
+  if (partySize === "Responsável e menores" && (names.length < 1 || names.length > 6)) {
+    throw new HttpError(400, "Informe o nome de cada menor sob sua responsabilidade.");
+  }
+
+  return names;
+}
+
 function optionalText(value, label, max) {
   const text = String(value ?? "").trim();
   if (text.length > max) throw new HttpError(400, `${label} muito longo.`);
@@ -522,13 +563,19 @@ async function handleApi(request, response, pathname) {
       const body = await readJsonBody(request);
       const guestName = requireText(body.guestName, "Nome", { min: 2, max: 120 });
       const partySize = String(body.partySize ?? "").trim();
-      if (!["Somente eu", "Eu e meus filhos"].includes(partySize)) {
-        throw new HttpError(400, "Quantidade de pessoas inválida.");
+      if (!["Somente eu", "Casal", "Responsável e menores"].includes(partySize)) {
+        throw new HttpError(400, "Tipo de confirmação inválido.");
       }
+      const additionalGuestNames = validateAdditionalGuestNames(
+        body.additionalGuestNames ?? [],
+        partySize,
+        guestName,
+      );
 
       const rsvp = await callSupabaseRpc("confirm_rsvp", {
         p_guest_name: guestName,
         p_party_size: partySize,
+        p_additional_guest_names: additionalGuestNames,
       });
       sendJson(response, 200, { rsvp: rsvp?.[0] });
       return true;
