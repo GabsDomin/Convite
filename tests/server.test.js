@@ -204,12 +204,13 @@ test("confirmação diferencia indivíduo, casal e responsável com menores", as
   assert.match(migration, /cardinality\(clean_additional_names\) <> 1/i);
 });
 
-test("protótipo mobile do álbum publica memórias e agrupa stories por convidado", async () => {
-  const [index, album, albumStyles, albumScript] = await Promise.all([
+test("protótipo mobile do álbum publica memórias, usa câmera e agrupa stories por convidado", async () => {
+  const [index, album, albumStyles, albumScript, server] = await Promise.all([
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../album.html", import.meta.url), "utf8"),
     readFile(new URL("../album.css", import.meta.url), "utf8"),
     readFile(new URL("../album.js", import.meta.url), "utf8"),
+    readFile(new URL("../server.js", import.meta.url), "utf8"),
   ]);
 
   assert.match(index, /href="\/album"[^>]*>Conhecer o álbum coletivo</i);
@@ -224,6 +225,14 @@ test("protótipo mobile do álbum publica memórias e agrupa stories por convida
   assert.match(albumStyles, /\.memory-grid[\s\S]*?columns:\s*2/i);
   assert.match(albumScript, /storyGroups\.set\(guestName, \{ slides: newStorySlides \}\)/);
   assert.match(albumScript, /function openStory\(person\)/);
+  assert.match(album, /data-open-camera[\s\S]*?Tirar foto agora/i);
+  assert.match(album, /data-camera-video/);
+  assert.match(album, /data-capture-camera/);
+  assert.match(albumScript, /navigator\.mediaDevices\?\.getUserMedia/);
+  assert.match(albumScript, /cameraCanvas\.toBlob/);
+  assert.match(albumScript, /cameraStream\.getTracks\(\)/);
+  assert.match(albumScript, /capturedFiles\.push\(new File/);
+  assert.match(server, /"Permissions-Policy": "camera=\(self\), microphone=\(\), geolocation=\(\)"/);
   assert.doesNotMatch(album, /on(?:click|change|submit)\s*=/i);
 });
 

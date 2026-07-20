@@ -17,10 +17,19 @@ const storyName = document.querySelector("[data-story-name]");
 const storyStage = document.querySelector("[data-story-stage]");
 const storyCaption = document.querySelector("[data-story-caption]");
 const toast = document.querySelector("[data-toast]");
+const cameraLaunchButton = document.querySelector("[data-open-camera]");
+const cameraPanel = document.querySelector("[data-camera-panel]");
+const cameraVideo = document.querySelector("[data-camera-video]");
+const cameraStatus = document.querySelector("[data-camera-status]");
+const cameraCanvas = document.querySelector("[data-camera-canvas]");
+const cameraCaptureButton = document.querySelector("[data-capture-camera]");
+const cameraSwitchButton = document.querySelector("[data-switch-camera]");
+const cameraCloseButton = document.querySelector("[data-close-camera]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime"]);
 const activeObjectUrls = new Set();
+const capturedFiles = [];
 const storyGroups = new Map([
   ["Gabriel", {
     slides: [
@@ -50,6 +59,8 @@ let activeStoryPerson = "";
 let activeStoryIndex = 0;
 let storyTimer;
 let toastTimer;
+let cameraStream;
+let cameraFacingMode = "environment";
 
 function getInitials(name) {
   return name
@@ -155,18 +166,114 @@ function validateFiles(files) {
   return "";
 }
 
+function getPendingFiles() {
+  return [...Array.from(fileInput.files || []), ...capturedFiles];
+}
+
 function renderSelectedFiles() {
-  const files = Array.from(fileInput.files || []);
+  const files = getPendingFiles();
   selectedFiles.replaceChildren();
   const error = validateFiles(files);
   showUploadError(error);
 
   files.slice(0, 10).forEach((file) => {
     const chip = document.createElement("span");
-    chip.textContent = `${file.name} · ${formatFileSize(file.size)}`;
+    const source = capturedFiles.includes(file) ? "Foto da câmera · " : "";
+    chip.textContent = `${source}${file.name} · ${formatFileSize(file.size)}`;
     chip.title = file.name;
     selectedFiles.append(chip);
   });
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = undefined;
+  }
+  cameraVideo.srcObject = null;
+  cameraVideo.classList.remove("is-mirrored");
+  cameraPanel.hidden = true;
+  cameraLaunchButton.hidden = false;
+  cameraStatus.hidden = false;
+  cameraStatus.textContent = "Preparando a câmera...";
+}
+
+function getCameraErrorMessage(error) {
+  if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+    return "Permita o acesso à câmera no navegador para tirar a foto.";
+  }
+  if (error?.name === "NotFoundError" || error?.name === "OverconstrainedError") {
+    return "Nenhuma câmera compatível foi encontrada neste aparelho.";
+  }
+  if (error?.name === "NotReadableError") {
+    return "A câmera está sendo usada por outro aplicativo. Feche-o e tente novamente.";
+  }
+  return "Não foi possível abrir a câmera. Você ainda pode escolher uma foto da galeria.";
+}
+
+async function startCamera() {
+  showUploadError();
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showUploadError("A câmera não está disponível neste navegador. Escolha uma foto da galeria.");
+    return;
+  }
+
+  stopCamera();
+  cameraPanel.hidden = false;
+  cameraLaunchButton.hidden = true;
+  cameraStatus.hidden = false;
+  cameraStatus.textContent = "Preparando a câmera...";
+  cameraVideo.classList.toggle("is-mirrored", cameraFacingMode === "user");
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: cameraFacingMode },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    });
+    cameraVideo.srcObject = cameraStream;
+    await cameraVideo.play();
+    cameraStatus.hidden = true;
+  } catch (error) {
+    const message = getCameraErrorMessage(error);
+    stopCamera();
+    showUploadError(message);
+  }
+}
+
+async function captureCameraPhoto() {
+  if (!cameraStream || !cameraVideo.videoWidth || !cameraVideo.videoHeight) {
+    showUploadError("Aguarde a imagem da câmera aparecer antes de tirar a foto.");
+    return;
+  }
+
+  cameraCaptureButton.disabled = true;
+  showUploadError();
+  try {
+    cameraCanvas.width = cameraVideo.videoWidth;
+    cameraCanvas.height = cameraVideo.videoHeight;
+    const context = cameraCanvas.getContext("2d");
+    if (!context) throw new Error("Canvas indisponível");
+    context.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+    const blob = await new Promise((resolve) => cameraCanvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) throw new Error("Falha ao gerar a foto");
+
+    const capturedAt = Date.now();
+    capturedFiles.push(new File([blob], `foto-${capturedAt}.jpg`, {
+      type: "image/jpeg",
+      lastModified: capturedAt,
+    }));
+    renderSelectedFiles();
+    stopCamera();
+    showToast("Foto pronta! Preencha seu nome e toque em Publicar agora.");
+  } catch {
+    showUploadError("Não foi possível salvar a foto. Tente novamente ou escolha uma imagem da galeria.");
+  } finally {
+    cameraCaptureButton.disabled = false;
+  }
 }
 
 function updateGalleryVisibility() {
@@ -192,9 +299,11 @@ function setActiveFilter(filter) {
 }
 
 function closeUploadDialog() {
+  stopCamera();
   if (!uploadDialog.open) return;
   uploadDialog.close();
   uploadForm.reset();
+  capturedFiles.length = 0;
   selectedFiles.replaceChildren();
   showUploadError();
 }
@@ -395,10 +504,17 @@ document.querySelectorAll("[data-filter]").forEach((button) => {
 });
 
 fileInput.addEventListener("change", renderSelectedFiles);
+cameraLaunchButton.addEventListener("click", startCamera);
+cameraCaptureButton.addEventListener("click", captureCameraPhoto);
+cameraSwitchButton.addEventListener("click", async () => {
+  cameraFacingMode = cameraFacingMode === "environment" ? "user" : "environment";
+  await startCamera();
+});
+cameraCloseButton.addEventListener("click", stopCamera);
 
 uploadForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const files = Array.from(fileInput.files || []);
+  const files = getPendingFiles();
   const error = validateFiles(files);
   if (error) {
     showUploadError(error);
@@ -464,6 +580,7 @@ storyDialog.addEventListener("cancel", (event) => {
 });
 
 window.addEventListener("beforeunload", () => {
+  stopCamera();
   activeObjectUrls.forEach((url) => URL.revokeObjectURL(url));
 });
 

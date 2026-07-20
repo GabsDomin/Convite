@@ -708,6 +708,7 @@ dialog::backdrop {
   width: min(calc(100% - 2rem), 680px);
   max-height: calc(100vh - 2rem);
   border-radius: 18px;
+  overflow: auto;
   color: var(--ink);
   background: var(--paper);
   box-shadow: 0 35px 100px rgba(0, 20, 50, 0.32);
@@ -776,6 +777,172 @@ dialog::backdrop {
 .upload-form select:focus {
   outline: 3px solid rgba(0, 63, 152, 0.14);
   border-color: var(--royal);
+}
+
+.camera-entry {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.35rem 0 0.9rem;
+}
+
+.camera-launch {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  min-height: 76px;
+  border: 1px solid rgba(0, 63, 152, 0.24);
+  border-radius: 13px;
+  padding: 0.8rem 0.9rem;
+  color: white;
+  background: linear-gradient(135deg, var(--royal), var(--royal-dark));
+  box-shadow: 0 14px 30px rgba(0, 47, 115, 0.18);
+  text-align: left;
+}
+
+.camera-launch:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 34px rgba(0, 47, 115, 0.24);
+}
+
+.camera-launch-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.camera-launch-icon svg {
+  width: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.camera-launch-copy strong,
+.camera-launch-copy small {
+  display: block;
+}
+
+.camera-launch-copy strong {
+  font-size: 0.96rem;
+}
+
+.camera-launch-copy small {
+  margin-top: 0.22rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.72rem;
+}
+
+.camera-launch-arrow {
+  font-size: 1.25rem;
+}
+
+.camera-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.camera-divider::before,
+.camera-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+  content: "";
+}
+
+.camera-panel {
+  margin: 0.35rem 0 1rem;
+  overflow: hidden;
+  border: 1px solid rgba(0, 63, 152, 0.2);
+  border-radius: 15px;
+  background: #061225;
+  box-shadow: 0 18px 40px rgba(0, 20, 50, 0.2);
+}
+
+.camera-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: #020814;
+}
+
+.camera-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.camera-preview video.is-mirrored {
+  transform: scaleX(-1);
+}
+
+.camera-preview p {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 1rem;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(2, 8, 20, 0.72);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.camera-controls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.8rem;
+  min-height: 82px;
+  padding: 0.65rem 0.85rem;
+}
+
+.camera-controls > button:not(.camera-shutter) {
+  border: 0;
+  padding: 0.7rem 0.25rem;
+  color: rgba(255, 255, 255, 0.82);
+  background: transparent;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.camera-shutter {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border: 3px solid white;
+  border-radius: 50%;
+  padding: 4px;
+  background: transparent;
+}
+
+.camera-shutter span {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: white;
+}
+
+.camera-shutter:active span {
+  transform: scale(0.86);
+}
+
+.camera-shutter:disabled {
+  opacity: 0.45;
 }
 
 .file-drop {
@@ -1422,6 +1589,39 @@ dialog::backdrop {
   .upload-dialog {
     width: calc(100% - 1rem);
     max-height: calc(100vh - 1rem);
+  }
+
+  .upload-form {
+    padding: 1.1rem;
+  }
+
+  .dialog-heading h2 {
+    margin-top: 0.4rem;
+    font-size: 2.45rem;
+  }
+
+  .dialog-copy {
+    margin: 0.7rem 0 1rem;
+    font-size: 0.78rem;
+  }
+
+  .camera-launch {
+    min-height: 70px;
+  }
+
+  .camera-preview {
+    aspect-ratio: 3 / 4;
+    max-height: 58vh;
+  }
+
+  .file-drop {
+    min-height: 125px;
+    padding: 1rem;
+  }
+
+  .file-drop svg {
+    width: 2rem;
+    margin-bottom: 0.4rem;
   }
 
   .lightbox {
