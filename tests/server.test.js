@@ -134,6 +134,20 @@ test("local da celebração mostra o endereço e abre o Google Maps com seguran�
   assert.doesNotMatch(html, /Espaço a definir/);
 });
 
+test("confirmação prioriza os detalhes da cerimônia sem pressionar por presentes", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../index.html", import.meta.url), "utf8"),
+    readFile(new URL("../script.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(html, /data-scroll-details hidden>Detalhes da cerimônia/);
+  assert.match(html, /id="detalhes"/);
+  assert.match(script, /detailsButton\.hidden = false/);
+  assert.match(script, /Que alegria ter você conosco!/);
+  assert.match(script, /se desejar, nossa lista de presentes/);
+  assert.doesNotMatch(script, /Se entrou aqui procurando um presentinho/);
+});
+
 test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", async () => {
   const config = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
   assert.equal(config.functions?.["server.ts"]?.includeFiles, "**/*");

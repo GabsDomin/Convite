@@ -254,12 +254,14 @@ function renderRsvpState() {
   const savedRsvp = getSavedRsvp();
   const heroCopy = document.querySelector(".hero-copy");
   const rsvpButton = document.querySelector("[data-open-rsvp]");
+  const detailsButton = document.querySelector("[data-scroll-details]");
 
   if (!heroCopy || !rsvpButton || !savedRsvp?.name) return;
 
-  heroCopy.textContent = `Olá, ${savedRsvp.name}! Sua presença já foi confirmada. Te esperamos lá. Se entrou aqui procurando um presentinho, a lista de presentes está logo abaixo.`;
+  heroCopy.textContent = `Olá, ${savedRsvp.name}! Sua presença já foi confirmada. Que alegria ter você conosco! Confira os detalhes da cerimônia e, se desejar, nossa lista de presentes.`;
   heroCopy.classList.add("confirmed");
   rsvpButton.hidden = true;
+  if (detailsButton) detailsButton.hidden = false;
 }
 
 function syncMusicButton() {
@@ -697,6 +699,11 @@ document.addEventListener("click", async (event) => {
 
   if (event.target.matches("[data-scroll-gifts]")) {
     document.querySelector("#presentes").scrollIntoView({ behavior: "smooth" });
+    return;
+  }
+
+  if (event.target.matches("[data-scroll-details]")) {
+    document.querySelector("#detalhes").scrollIntoView({ behavior: "smooth" });
     return;
   }
 
