@@ -235,10 +235,14 @@ test("protótipo mobile do álbum publica memórias, usa câmera e agrupa storie
   assert.match(album, /data-camera-mode="photo"[\s\S]*?data-camera-mode="video"/i);
   assert.match(album, /data-camera-zoom-input/);
   assert.match(album, /data-camera-recording/);
+  assert.match(album, /data-camera-gallery/);
+  assert.match(album, /class="camera-topbar"/);
   assert.match(album, /video\/webm/);
   assert.match(albumScript, /cameraVideoTrack\.getCapabilities\(\)/);
   assert.match(albumScript, /cameraVideoTrack\.applyConstraints\(\{ advanced: \[\{ zoom \}\] \}\)/);
   assert.match(albumScript, /new MediaRecorder\(cameraStream/);
+  assert.match(albumScript, /cameraGalleryButton\.addEventListener\("click"/);
+  assert.match(albumStyles, /\.camera-panel[\s\S]*?position:\s*fixed[\s\S]*?height:\s*100dvh/);
   assert.match(albumScript, /maximumRecordingDuration = 30_000/);
   assert.match(albumScript, /audio:[\s\S]*?echoCancellation: true/);
   assert.match(album, /data-share-story[\s\S]*?Compartilhar no Instagram/i);

@@ -276,6 +276,10 @@ a {
   line-height: 1.45;
 }
 
+body.camera-active {
+  overflow: hidden;
+}
+
 .stories-section {
   padding: 2.7rem max(1.25rem, calc((100vw - 1180px) / 2)) 1.8rem;
   background: #fbfaf7;
@@ -714,6 +718,18 @@ dialog::backdrop {
   box-shadow: 0 35px 100px rgba(0, 20, 50, 0.32);
 }
 
+.upload-dialog.is-camera-open {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 0;
+}
+
 .upload-form {
   padding: clamp(1.35rem, 4vw, 2.25rem);
 }
@@ -861,24 +877,81 @@ dialog::backdrop {
 }
 
 .camera-panel {
-  margin: 0.35rem 0 1rem;
+  --camera-frame-width: min(100vw, 500px);
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  margin: 0;
   overflow: hidden;
-  border: 1px solid rgba(0, 63, 152, 0.2);
-  border-radius: 15px;
-  background: #061225;
-  box-shadow: 0 18px 40px rgba(0, 20, 50, 0.2);
+  border: 0;
+  border-radius: 0;
+  color: white;
+  background: #000;
+  box-shadow: none;
+  isolation: isolate;
+}
+
+.camera-panel[hidden] {
+  display: none;
+}
+
+.camera-panel [hidden] {
+  display: none !important;
 }
 
 .camera-preview {
-  position: relative;
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
   display: grid;
   place-items: center;
-  aspect-ratio: 4 / 3;
+  width: var(--camera-frame-width);
+  height: 100%;
   overflow: hidden;
+  transform: translateX(-50%);
   background: #020814;
 }
 
+.camera-preview::before,
+.camera-preview::after {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  left: 0;
+  height: 28%;
+  pointer-events: none;
+  content: "";
+}
+
+.camera-preview::before {
+  top: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), transparent);
+}
+
+.camera-preview::after {
+  bottom: 0;
+  height: 38%;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.82), transparent);
+}
+
+.camera-preview.is-demo {
+  background:
+    linear-gradient(180deg, rgba(11, 41, 86, 0.08), rgba(0, 18, 48, 0.28)),
+    image-set(
+      url("/assets/background-mobile.jpg") type("image/jpeg"),
+      url("/assets/background-mobile.png") type("image/png")
+    );
+  background-position: center;
+  background-size: cover;
+}
+
 .camera-preview video {
+  position: relative;
+  z-index: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -890,6 +963,7 @@ dialog::backdrop {
 
 .camera-preview p {
   position: absolute;
+  z-index: 3;
   inset: 0;
   display: grid;
   place-items: center;
@@ -903,8 +977,9 @@ dialog::backdrop {
 
 .camera-recording {
   position: absolute;
-  top: 0.8rem;
-  left: 0.8rem;
+  z-index: 5;
+  top: max(4.8rem, calc(env(safe-area-inset-top) + 4.1rem));
+  left: 50%;
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -915,6 +990,7 @@ dialog::backdrop {
   font-size: 0.66rem;
   font-weight: 850;
   letter-spacing: 0.08em;
+  transform: translateX(-50%);
   backdrop-filter: blur(8px);
 }
 
@@ -937,22 +1013,31 @@ dialog::backdrop {
 }
 
 .camera-tools {
-  display: flex;
+  position: absolute;
+  z-index: 5;
+  bottom: max(9.8rem, calc(env(safe-area-inset-bottom) + 9.2rem));
+  left: 50%;
+  display: grid;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 0.85rem 0;
+  width: min(calc(100% - 3rem), 360px);
+  padding: 0;
+  transform: translateX(-50%);
 }
 
 .camera-zoom {
   display: grid;
-  flex: 1;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 0.55rem;
   min-width: 0;
-  color: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  padding: 0.48rem 0.7rem;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(7, 12, 20, 0.38);
   font-size: 0.68rem;
   font-weight: 750;
+  backdrop-filter: blur(14px);
 }
 
 .camera-zoom input {
@@ -968,54 +1053,109 @@ dialog::backdrop {
   text-align: right;
 }
 
-.camera-torch {
-  display: inline-grid;
-  grid-template-columns: auto auto;
+.camera-topbar {
+  position: absolute;
+  z-index: 6;
+  top: max(0.8rem, env(safe-area-inset-top));
+  left: 50%;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
   align-items: center;
-  gap: 0.35rem;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
-  padding: 0.45rem 0.6rem;
-  color: rgba(255, 255, 255, 0.78);
-  background: rgba(255, 255, 255, 0.08);
-  font-size: 0.65rem;
-  font-weight: 750;
+  width: min(calc(100% - 1.5rem), 476px);
+  transform: translateX(-50%);
 }
 
-.camera-torch svg {
-  width: 16px;
+.camera-topbar button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  color: white;
+  background: rgba(8, 13, 22, 0.34);
+  backdrop-filter: blur(12px);
+}
+
+.camera-topbar button:active {
+  transform: scale(0.92);
+}
+
+.camera-brand {
+  justify-self: center;
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: 0.18em;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+}
+
+.camera-brand i {
+  color: rgba(255, 255, 255, 0.68);
+  font-family: var(--script);
+  font-size: 1.45rem;
+  font-weight: 400;
+}
+
+.camera-close {
+  grid-column: 3;
+}
+
+.camera-topbar svg {
+  width: 22px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.6;
+  stroke-width: 1.8;
+}
+
+.camera-torch svg {
+  width: 21px;
 }
 
 .camera-torch.is-active {
-  color: #111827;
+  color: #101827;
   background: white;
 }
 
 .camera-modes {
+  position: absolute;
+  z-index: 5;
+  bottom: max(7rem, calc(env(safe-area-inset-bottom) + 6.5rem));
+  left: 50%;
   display: flex;
   justify-content: center;
-  gap: 0.35rem;
-  padding: 0.75rem 0.85rem 0;
+  gap: 1.35rem;
+  transform: translateX(-50%);
 }
 
 .camera-modes button {
+  position: relative;
   border: 0;
-  border-radius: 999px;
-  padding: 0.42rem 0.8rem;
-  color: rgba(255, 255, 255, 0.6);
+  padding: 0.4rem 0;
+  color: rgba(255, 255, 255, 0.58);
   background: transparent;
-  font-size: 0.68rem;
-  font-weight: 800;
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-shadow: 0 1px 7px rgba(0, 0, 0, 0.6);
+  text-transform: uppercase;
 }
 
 .camera-modes button[aria-pressed="true"] {
-  color: #071326;
+  color: white;
+}
+
+.camera-modes button[aria-pressed="true"]::after {
+  position: absolute;
+  right: 25%;
+  bottom: 0;
+  left: 25%;
+  height: 2px;
+  border-radius: 999px;
   background: white;
+  content: "";
 }
 
 .camera-modes button:disabled,
@@ -1024,32 +1164,78 @@ dialog::backdrop {
 }
 
 .camera-controls {
+  position: absolute;
+  z-index: 5;
+  bottom: max(1.15rem, calc(env(safe-area-inset-bottom) + 0.6rem));
+  left: 50%;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 76px 1fr 76px;
   align-items: center;
-  gap: 0.8rem;
-  min-height: 82px;
-  padding: 0.65rem 0.85rem;
+  justify-items: center;
+  width: min(calc(100% - 1.7rem), 450px);
+  min-height: 78px;
+  padding: 0;
+  transform: translateX(-50%);
 }
 
 .camera-controls > button:not(.camera-shutter) {
+  display: grid;
+  justify-items: center;
+  gap: 0.3rem;
   border: 0;
-  padding: 0.7rem 0.25rem;
-  color: rgba(255, 255, 255, 0.82);
+  padding: 0;
+  color: rgba(255, 255, 255, 0.9);
   background: transparent;
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.camera-controls small {
+  font-size: inherit;
+  text-shadow: 0 1px 7px rgba(0, 0, 0, 0.8);
+}
+
+.camera-gallery-thumb,
+.camera-switch > span {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 12px;
+  color: white;
+  background:
+    radial-gradient(circle at 68% 75%, rgba(254, 218, 117, 0.95) 0 14%, rgba(250, 126, 30, 0.9) 24%, rgba(214, 41, 118, 0.92) 52%, rgba(79, 91, 213, 0.95) 100%);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.25);
+}
+
+.camera-gallery svg,
+.camera-switch svg {
+  width: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.camera-switch > span {
+  border: 0;
+  border-radius: 50%;
+  background: rgba(8, 13, 22, 0.38);
+  backdrop-filter: blur(12px);
 }
 
 .camera-shutter {
   display: grid;
   place-items: center;
-  width: 58px;
-  height: 58px;
+  width: 72px;
+  height: 72px;
   border: 3px solid white;
   border-radius: 50%;
-  padding: 4px;
-  background: transparent;
+  padding: 5px;
+  background: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 3px 18px rgba(0, 0, 0, 0.22);
 }
 
 .camera-shutter span {
@@ -1072,6 +1258,17 @@ dialog::backdrop {
 
 .camera-shutter:active span {
   transform: scale(0.86);
+}
+
+.camera-gallery:active .camera-gallery-thumb,
+.camera-switch:active > span {
+  transform: scale(0.9);
+}
+
+.camera-panel button:focus-visible,
+.camera-panel input:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 3px;
 }
 
 .camera-shutter:disabled {
@@ -1804,8 +2001,9 @@ dialog::backdrop {
   }
 
   .camera-preview {
-    aspect-ratio: 3 / 4;
-    max-height: 58vh;
+    width: 100%;
+    max-height: none;
+    aspect-ratio: auto;
   }
 
   .file-drop {

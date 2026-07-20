@@ -22,11 +22,13 @@ const storyShareHint = document.querySelector("[data-story-share-hint]");
 const toast = document.querySelector("[data-toast]");
 const cameraLaunchButton = document.querySelector("[data-open-camera]");
 const cameraPanel = document.querySelector("[data-camera-panel]");
+const cameraPreview = document.querySelector("[data-camera-preview]");
 const cameraVideo = document.querySelector("[data-camera-video]");
 const cameraStatus = document.querySelector("[data-camera-status]");
 const cameraCanvas = document.querySelector("[data-camera-canvas]");
 const cameraCaptureButton = document.querySelector("[data-capture-camera]");
 const cameraSwitchButton = document.querySelector("[data-switch-camera]");
+const cameraGalleryButton = document.querySelector("[data-camera-gallery]");
 const cameraCloseButton = document.querySelector("[data-close-camera]");
 const cameraRecording = document.querySelector("[data-camera-recording]");
 const recordingTime = document.querySelector("[data-recording-time]");
@@ -77,6 +79,8 @@ let cameraVideoTrack;
 let activeRecording;
 let torchEnabled = false;
 const maximumRecordingDuration = 30_000;
+const localCameraPreview = ["127.0.0.1", "localhost"].includes(location.hostname)
+  && new URLSearchParams(location.search).has("camera-preview");
 
 function getInitials(name) {
   return name
@@ -218,6 +222,7 @@ function resetRecordingInterface() {
     button.disabled = button.dataset.cameraMode === "video" && !window.MediaRecorder;
   });
   cameraSwitchButton.disabled = false;
+  cameraGalleryButton.disabled = false;
 }
 
 function stopActiveRecording(shouldSave = true) {
@@ -247,8 +252,12 @@ function stopCamera() {
   resetCameraCapabilities();
   resetRecordingInterface();
   cameraVideo.srcObject = null;
+  cameraVideo.hidden = false;
   cameraVideo.classList.remove("is-mirrored");
+  cameraPreview.classList.remove("is-demo");
   cameraPanel.hidden = true;
+  uploadDialog.classList.remove("is-camera-open");
+  document.body.classList.remove("camera-active");
   cameraLaunchButton.hidden = false;
   cameraStatus.hidden = false;
   cameraStatus.textContent = "Preparando a câmera...";
@@ -269,17 +278,34 @@ function getCameraErrorMessage(error) {
 
 async function startCamera() {
   showUploadError();
-  if (!navigator.mediaDevices?.getUserMedia) {
-    showUploadError("A câmera não está disponível neste navegador. Escolha uma foto da galeria.");
-    return;
-  }
-
   stopCamera();
   cameraPanel.hidden = false;
+  uploadDialog.classList.add("is-camera-open");
+  document.body.classList.add("camera-active");
   cameraLaunchButton.hidden = true;
   cameraStatus.hidden = false;
   cameraStatus.textContent = "Preparando a câmera...";
   cameraVideo.classList.toggle("is-mirrored", cameraFacingMode === "user");
+
+  if (localCameraPreview) {
+    cameraPreview.classList.add("is-demo");
+    cameraVideo.hidden = true;
+    cameraStatus.hidden = true;
+    cameraTools.hidden = false;
+    cameraZoom.hidden = false;
+    cameraZoomInput.min = "1";
+    cameraZoomInput.max = "3";
+    cameraZoomInput.value = "1";
+    cameraZoomValue.textContent = "1×";
+    cameraTorchButton.hidden = false;
+    return;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    stopCamera();
+    showUploadError("A câmera não está disponível neste navegador. Escolha uma foto da galeria.");
+    return;
+  }
 
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
@@ -388,7 +414,7 @@ async function setCameraMode(mode, restartCamera = true) {
   cameraCaptureButton.classList.toggle("is-video-mode", cameraMode === "video");
   cameraCaptureButton.setAttribute("aria-label", cameraMode === "video" ? "Iniciar gravação" : "Capturar foto");
 
-  if (restartCamera && cameraStream) await startCamera();
+  if (restartCamera && (cameraStream || localCameraPreview)) await startCamera();
 }
 
 function getSupportedRecordingMimeType() {
@@ -475,6 +501,7 @@ function startVideoRecording() {
       button.disabled = true;
     });
     cameraSwitchButton.disabled = true;
+    cameraGalleryButton.disabled = true;
     updateRecordingClock(session);
     session.timer = window.setInterval(() => updateRecordingClock(session), 250);
     session.stopTimer = window.setTimeout(() => stopActiveRecording(true), maximumRecordingDuration);
@@ -1000,6 +1027,10 @@ cameraCaptureButton.addEventListener("click", handleCameraCapture);
 cameraSwitchButton.addEventListener("click", async () => {
   cameraFacingMode = cameraFacingMode === "environment" ? "user" : "environment";
   await startCamera();
+});
+cameraGalleryButton.addEventListener("click", () => {
+  stopCamera();
+  fileInput.click();
 });
 cameraCloseButton.addEventListener("click", stopCamera);
 cameraZoomInput.addEventListener("input", applyCameraZoom);
