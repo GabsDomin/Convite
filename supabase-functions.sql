@@ -62,9 +62,9 @@ security definer
 set search_path = public
 as $$
 declare
-  clean_name text := regexp_replace(trim(p_guest_name), '\s+', ' ', 'g');
+  clean_name text := regexp_replace(trim(coalesce(p_guest_name, '')), '\s+', ' ', 'g');
 begin
-  if clean_name = '' then
+  if char_length(clean_name) not between 2 and 120 then
     raise exception 'Nome obrigatório';
   end if;
 
@@ -104,11 +104,12 @@ security definer
 set search_path = public
 as $$
 declare
-  clean_name text := regexp_replace(trim(p_guest_name), '\s+', ' ', 'g');
+  clean_name text := regexp_replace(trim(coalesce(p_guest_name, '')), '\s+', ' ', 'g');
   selected_gift public.gifts%rowtype;
   final_amount integer;
+  contributed_amount integer;
 begin
-  if clean_name = '' then
+  if char_length(clean_name) not between 2 and 120 then
     raise exception 'Nome obrigatório';
   end if;
 
@@ -116,7 +117,8 @@ begin
   into selected_gift
   from public.gifts
   where gifts.id = p_gift_id
-    and gifts.status <> 'hidden';
+    and gifts.status <> 'hidden'
+  for update;
 
   if selected_gift.id is null then
     raise exception 'Presente não encontrado';
@@ -129,6 +131,16 @@ begin
 
     if final_amount is null or not (final_amount = any(selected_gift.quota_options)) then
       raise exception 'Valor da cota inválido';
+    end if;
+
+    select coalesce(sum(gr.amount), 0)::integer
+    into contributed_amount
+    from public.gift_reservations gr
+    where gr.gift_id = selected_gift.id
+      and gr.gift_type = 'quota';
+
+    if contributed_amount + final_amount > selected_gift.goal then
+      raise exception 'Essa cota já atingiu o valor necessário';
     end if;
   end if;
 
@@ -151,6 +163,9 @@ exception
 end;
 $$;
 
-grant execute on function public.get_public_gifts() to anon, authenticated;
-grant execute on function public.confirm_rsvp(text, text) to anon, authenticated;
-grant execute on function public.reserve_gift(text, text, integer) to anon, authenticated;
+revoke execute on function public.get_public_gifts() from public, anon, authenticated;
+revoke execute on function public.confirm_rsvp(text, text) from public, anon, authenticated;
+revoke execute on function public.reserve_gift(text, text, integer) from public, anon, authenticated;
+grant execute on function public.get_public_gifts() to service_role;
+grant execute on function public.confirm_rsvp(text, text) to service_role;
+grant execute on function public.reserve_gift(text, text, integer) to service_role;

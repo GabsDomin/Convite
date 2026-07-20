@@ -1,26 +1,35 @@
 # Convite Gabriel & Halanaia
 
-Site de convite com confirmação de presença, lista de presentes via Supabase e pagamento online com Mercado Pago Checkout Pro.
+Convite de casamento com confirmação de presença, lista de presentes no Supabase e pagamento online pelo Mercado Pago Checkout Pro.
+
+## Publicação na Vercel
+
+1. Importe o repositório `GabsDomin/Convite`.
+2. Mantenha `Application Preset: Node` e `Root Directory: ./`.
+3. Cadastre as variáveis abaixo em `Settings > Environment Variables`.
+4. Faça o deploy. O arquivo `server.ts` é a entrada Node detectada pela Vercel.
+5. Em `Settings > Domains`, adicione `gab-naia.online` e, se quiser, `www.gab-naia.online`.
+6. No provedor do domínio, use exatamente os registros DNS mostrados pela Vercel.
 
 ## Variáveis de ambiente
 
-Configure na Railway:
+Cadastre em `Production`:
 
 ```env
 SUPABASE_URL=https://lyuqvwrikfajmcodwous.supabase.co
-SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 MERCADO_PAGO_ACCESS_TOKEN=...
-NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY=...
 MERCADO_PAGO_WEBHOOK_SECRET=...
-SITE_URL=https://convite-production.up.railway.app
-BACKEND_URL=https://convite-production.up.railway.app
+SITE_URL=https://gab-naia.online
 ```
 
-O `MERCADO_PAGO_ACCESS_TOKEN` fica apenas no backend. Não coloque esse token em arquivos públicos nem no frontend.
+`BACKEND_URL` é opcional. Ele só é necessário se a API ficar em outro domínio; nesse projeto, deixe sem cadastrar porque o backend usa o mesmo `SITE_URL`.
+
+Segredos como `SUPABASE_SERVICE_ROLE_KEY`, `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_WEBHOOK_SECRET` ficam somente no servidor. Nunca use prefixos públicos como `NEXT_PUBLIC_`, `VITE_` ou `PUBLIC_` nessas variáveis.
 
 ## Banco de dados
 
-Rode os scripts no Supabase SQL Editor, nesta ordem:
+No Supabase, abra o SQL Editor e execute os arquivos nesta ordem, inclusive se as tabelas já existirem:
 
 ```txt
 supabase-schema.sql
@@ -28,55 +37,28 @@ supabase-functions.sql
 supabase-payments.sql
 ```
 
-O arquivo `supabase-payments.sql` cria/adapta a tabela `payment_orders`, cria a função para pedido pendente do Mercado Pago, atualiza o status real pelo webhook e reserva o presente quando o pagamento é aprovado.
+Os scripts são reaplicáveis e restringem tabelas e funções à `service_role`. O navegador não recebe uma chave do Supabase.
 
 ## Mercado Pago
 
-No painel Mercado Pago Developers:
-
-1. Crie uma aplicação com Checkout Pro.
-2. Use o `Access Token` em `MERCADO_PAGO_ACCESS_TOKEN`.
-3. Use a `Public Key` em `NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY`.
-4. Configure Webhooks para o evento `payment`.
-5. URL do webhook:
+1. Crie uma aplicação com Checkout Pro no Mercado Pago Developers.
+2. Use primeiro um Access Token `TEST-...`; em produção, troque por `APP_USR-...`.
+3. Cadastre um webhook para o evento `payment` nesta URL:
 
 ```txt
-https://convite-production.up.railway.app/api/webhooks/mercadopago
+https://gab-naia.online/api/webhooks/mercadopago
 ```
 
-6. Copie a assinatura secreta do webhook para `MERCADO_PAGO_WEBHOOK_SECRET`.
+4. Copie a assinatura secreta do webhook para `MERCADO_PAGO_WEBHOOK_SECRET` na Vercel.
+5. Depois de alterar qualquer variável, faça um novo deploy.
 
-## Fluxo de pagamento
+As páginas de retorno são `/pagamento/sucesso`, `/pagamento/erro` e `/pagamento/pendente`. Elas não aprovam pagamentos; somente o webhook validado confirma o status consultado diretamente no Mercado Pago.
 
-1. O convidado escolhe um presente.
-2. Informa nome e mensagem opcional.
-3. O backend cria uma intenção em `payment_orders`.
-4. O backend cria uma preferência no Mercado Pago.
-5. O frontend redireciona para o link correto do ambiente:
-   - token `TEST-...`: `sandbox_init_point`
-   - token `APP_USR-...`: `init_point`
-6. O Mercado Pago chama o webhook.
-7. O webhook consulta `/v1/payments/:id` no Mercado Pago.
-8. Se o status for `approved`, o presente é reservado em `gift_reservations`.
-
-As páginas de retorno existem em:
-
-```txt
-/pagamento/sucesso
-/pagamento/erro
-/pagamento/pendente
-```
-
-Elas não confirmam pagamento sozinhas. A confirmação real é feita pelo webhook.
-
-## Teste
-
-Use credenciais sandbox/teste do Mercado Pago primeiro. Depois de configurar as variáveis:
+## Desenvolvimento e validação
 
 ```bash
 npm start
+npm run check
 ```
 
-Abra a lista, escolha um presente, selecione online e confirme. O Checkout Pro deve abrir no Mercado Pago com os meios de pagamento disponíveis na sua conta.
-
-Para pagamentos reais, troque `MERCADO_PAGO_ACCESS_TOKEN` para uma credencial de produção (`APP_USR-...`) no Railway. Credenciais `TEST-...` abrem o checkout sandbox e não servem para receber pagamentos reais.
+`npm run check` valida a sintaxe e testa arquivos públicos, proteção contra exposição de código e segredos, limites da API e a data exibida.

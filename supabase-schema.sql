@@ -87,29 +87,18 @@ alter table public.gifts enable row level security;
 alter table public.gift_reservations enable row level security;
 
 drop policy if exists "Public can create rsvps" on public.rsvps;
-create policy "Public can create rsvps"
-on public.rsvps for insert
-to anon, authenticated
-with check (true);
-
 drop policy if exists "Public can update own rsvp by name" on public.rsvps;
-create policy "Public can update own rsvp by name"
-on public.rsvps for update
-to anon, authenticated
-using (true)
-with check (true);
-
 drop policy if exists "Public can read gift catalog" on public.gifts;
-create policy "Public can read gift catalog"
-on public.gifts for select
-to anon, authenticated
-using (status <> 'hidden');
-
 drop policy if exists "Public can create gift reservations" on public.gift_reservations;
-create policy "Public can create gift reservations"
-on public.gift_reservations for insert
-to anon, authenticated
-with check (true);
+
+-- O navegador acessa os dados somente pela API do projeto. A service_role fica
+-- exclusivamente no servidor e ignora RLS para executar as operações validadas.
+revoke all on table public.rsvps from anon, authenticated;
+revoke all on table public.gifts from anon, authenticated;
+revoke all on table public.gift_reservations from anon, authenticated;
+grant all on table public.rsvps to service_role;
+grant all on table public.gifts to service_role;
+grant all on table public.gift_reservations to service_role;
 
 insert into public.gifts (id, name, gift_type, section, category, description, value, goal, quota_options, sort_order)
 values

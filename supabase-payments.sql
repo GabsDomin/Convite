@@ -45,6 +45,13 @@ alter table public.payment_orders
 alter table public.gifts
   add column if not exists image_url text;
 
+alter table public.gift_reservations
+  add column if not exists payment_order_id uuid references public.payment_orders(id) on delete restrict;
+
+create unique index if not exists gift_reservations_payment_order_id_key
+  on public.gift_reservations (payment_order_id)
+  where payment_order_id is not null;
+
 do $$
 declare
   status_constraint text;
@@ -70,6 +77,25 @@ alter table public.payment_orders
 create index if not exists payment_orders_gift_status_idx
   on public.payment_orders (gift_id, status, expires_at);
 
+create unique index if not exists payment_orders_mp_payment_id_key
+  on public.payment_orders (mercado_pago_payment_id)
+  where mercado_pago_payment_id is not null;
+
+with ranked_pending_fixed_orders as (
+  select id, row_number() over (partition by gift_id order by created_at desc) as position
+  from public.payment_orders
+  where gift_type = 'fixed' and status = 'pending'
+)
+update public.payment_orders po
+set status = 'cancelled'
+from ranked_pending_fixed_orders ranked
+where po.id = ranked.id
+  and ranked.position > 1;
+
+create unique index if not exists one_pending_fixed_payment_per_gift
+  on public.payment_orders (gift_id)
+  where gift_type = 'fixed' and status = 'pending';
+
 drop trigger if exists set_payment_orders_updated_at on public.payment_orders;
 create trigger set_payment_orders_updated_at
 before update on public.payment_orders
@@ -83,6 +109,9 @@ on public.payment_orders for all
 to anon, authenticated
 using (false)
 with check (false);
+
+revoke all on table public.payment_orders from anon, authenticated;
+grant all on table public.payment_orders to service_role;
 
 drop function if exists public.get_public_gifts();
 
@@ -183,24 +212,37 @@ declare
   clean_email text := lower(trim(coalesce(p_buyer_email, '')));
   selected_gift public.gifts%rowtype;
   final_amount integer;
+  committed_amount integer;
 begin
-  if clean_name = '' then
+  if char_length(clean_name) not between 2 and 120 then
     raise exception 'Nome obrigatório';
   end if;
 
-  if clean_email <> '' and clean_email !~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$' then
+  if char_length(clean_email) > 254
+    or (clean_email <> '' and clean_email !~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$') then
     raise exception 'E-mail inválido';
+  end if;
+
+  if char_length(coalesce(p_message, '')) > 500 then
+    raise exception 'Mensagem muito longa';
   end if;
 
   select *
   into selected_gift
   from public.gifts
   where gifts.id = p_gift_id
-    and gifts.status <> 'hidden';
+    and gifts.status <> 'hidden'
+  for update;
 
   if selected_gift.id is null then
     raise exception 'Presente não encontrado';
   end if;
+
+  update public.payment_orders
+  set status = 'cancelled'
+  where gift_id = selected_gift.id
+    and status = 'pending'
+    and expires_at <= now();
 
   if selected_gift.gift_type = 'fixed' then
     if exists (
@@ -224,6 +266,28 @@ begin
 
     if final_amount is null or not (final_amount = any(selected_gift.quota_options)) then
       raise exception 'Valor da cota inválido';
+    end if;
+
+    select (
+      coalesce((
+        select sum(gr.amount)
+        from public.gift_reservations gr
+        where gr.gift_id = selected_gift.id
+          and gr.gift_type = 'quota'
+      ), 0)
+      + coalesce((
+        select sum(po.amount)
+        from public.payment_orders po
+        where po.gift_id = selected_gift.id
+          and po.gift_type = 'quota'
+          and po.status = 'pending'
+          and po.expires_at > now()
+      ), 0)
+    )::integer
+    into committed_amount;
+
+    if committed_amount + final_amount > selected_gift.goal then
+      raise exception 'Essa cota já atingiu o valor necessário';
     end if;
   end if;
 
@@ -260,6 +324,117 @@ begin
   into id, gift_id, buyer_name, buyer_email, gift_name, gift_type, amount, status, expires_at;
 
   return next;
+exception
+  when unique_violation then
+    raise exception 'Esse presente já está aguardando pagamento';
+end;
+$$;
+
+-- Substitui a função criada em supabase-functions.sql para também considerar
+-- pedidos online pendentes ao reservar um presente pessoalmente.
+create or replace function public.reserve_gift(
+  p_gift_id text,
+  p_guest_name text,
+  p_amount integer default null
+)
+returns table (
+  id uuid,
+  gift_id text,
+  guest_name text,
+  gift_name text,
+  gift_type text,
+  amount integer,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  clean_name text := regexp_replace(trim(coalesce(p_guest_name, '')), '\s+', ' ', 'g');
+  selected_gift public.gifts%rowtype;
+  final_amount integer;
+  committed_amount integer;
+begin
+  if char_length(clean_name) not between 2 and 120 then
+    raise exception 'Nome obrigatório';
+  end if;
+
+  select *
+  into selected_gift
+  from public.gifts
+  where gifts.id = p_gift_id
+    and gifts.status <> 'hidden'
+  for update;
+
+  if selected_gift.id is null then
+    raise exception 'Presente não encontrado';
+  end if;
+
+  update public.payment_orders
+  set status = 'cancelled'
+  where gift_id = selected_gift.id
+    and status = 'pending'
+    and expires_at <= now();
+
+  if selected_gift.gift_type = 'fixed' then
+    if exists (
+      select 1
+      from public.payment_orders po
+      where po.gift_id = selected_gift.id
+        and po.gift_type = 'fixed'
+        and po.status = 'pending'
+    ) then
+      raise exception 'Esse presente já está aguardando pagamento';
+    end if;
+
+    final_amount := selected_gift.value;
+  else
+    final_amount := p_amount;
+
+    if final_amount is null or not (final_amount = any(selected_gift.quota_options)) then
+      raise exception 'Valor da cota inválido';
+    end if;
+
+    select (
+      coalesce((
+        select sum(gr.amount)
+        from public.gift_reservations gr
+        where gr.gift_id = selected_gift.id
+          and gr.gift_type = 'quota'
+      ), 0)
+      + coalesce((
+        select sum(po.amount)
+        from public.payment_orders po
+        where po.gift_id = selected_gift.id
+          and po.gift_type = 'quota'
+          and po.status = 'pending'
+          and po.expires_at > now()
+      ), 0)
+    )::integer
+    into committed_amount;
+
+    if committed_amount + final_amount > selected_gift.goal then
+      raise exception 'Essa cota já atingiu o valor necessário';
+    end if;
+  end if;
+
+  insert into public.gift_reservations (gift_id, guest_name, gift_name, gift_type, amount)
+  values (selected_gift.id, clean_name, selected_gift.name, selected_gift.gift_type, final_amount)
+  returning
+    gift_reservations.id,
+    gift_reservations.gift_id,
+    gift_reservations.guest_name,
+    gift_reservations.gift_name,
+    gift_reservations.gift_type,
+    gift_reservations.amount,
+    gift_reservations.created_at
+  into id, gift_id, guest_name, gift_name, gift_type, amount, created_at;
+
+  return next;
+exception
+  when unique_violation then
+    raise exception 'Esse presente já foi escolhido';
 end;
 $$;
 
@@ -308,10 +483,25 @@ begin
   select *
   into selected_order
   from public.payment_orders
-  where payment_orders.id = p_order_id::uuid;
+  where payment_orders.id = p_order_id::uuid
+  for update;
 
   if selected_order.id is null then
     raise exception 'Pedido não encontrado';
+  end if;
+
+  perform 1
+  from public.gifts
+  where gifts.id = selected_order.gift_id
+  for update;
+
+  if exists (
+    select 1
+    from public.payment_orders po
+    where po.mercado_pago_payment_id = p_payment_id
+      and po.id <> selected_order.id
+  ) then
+    raise exception 'Pagamento já associado a outro pedido';
   end if;
 
   if p_amount is not null and round(p_amount * 100) <> selected_order.amount * 100 then
@@ -340,15 +530,34 @@ begin
   where payment_orders.id = selected_order.id;
 
   if mapped_status = 'approved' then
-    insert into public.gift_reservations (gift_id, guest_name, gift_name, gift_type, amount)
+    if selected_order.gift_type = 'fixed'
+      and selected_order.status <> 'approved'
+      and exists (
+        select 1
+        from public.gift_reservations gr
+        where gr.gift_id = selected_order.gift_id
+          and gr.gift_type = 'fixed'
+      ) then
+      raise exception 'Esse presente já foi escolhido; pagamento requer análise';
+    end if;
+
+    insert into public.gift_reservations (
+      gift_id,
+      guest_name,
+      gift_name,
+      gift_type,
+      amount,
+      payment_order_id
+    )
     values (
       selected_order.gift_id,
       selected_order.guest_name,
       selected_order.gift_name,
       selected_order.gift_type,
-      selected_order.amount
+      selected_order.amount,
+      selected_order.id
     )
-    on conflict do nothing;
+    on conflict (payment_order_id) where payment_order_id is not null do nothing;
   end if;
 
   return query
@@ -383,8 +592,15 @@ begin
 end;
 $$;
 
-grant execute on function public.get_public_gifts() to anon, authenticated;
-grant execute on function public.create_mercadopago_order(text, text, text, text, integer) to anon, authenticated;
-grant execute on function public.set_mercadopago_preference(text, text) to anon, authenticated;
-grant execute on function public.confirm_mercadopago_payment(text, text, text, numeric, text, timestamptz, text, jsonb) to anon, authenticated;
-grant execute on function public.mark_mercadopago_order_error(text, jsonb) to anon, authenticated;
+revoke execute on function public.get_public_gifts() from public, anon, authenticated;
+revoke execute on function public.reserve_gift(text, text, integer) from public, anon, authenticated;
+revoke execute on function public.create_mercadopago_order(text, text, text, text, integer) from public, anon, authenticated;
+revoke execute on function public.set_mercadopago_preference(text, text) from public, anon, authenticated;
+revoke execute on function public.confirm_mercadopago_payment(text, text, text, numeric, text, timestamptz, text, jsonb) from public, anon, authenticated;
+revoke execute on function public.mark_mercadopago_order_error(text, jsonb) from public, anon, authenticated;
+grant execute on function public.get_public_gifts() to service_role;
+grant execute on function public.reserve_gift(text, text, integer) to service_role;
+grant execute on function public.create_mercadopago_order(text, text, text, text, integer) to service_role;
+grant execute on function public.set_mercadopago_preference(text, text) to service_role;
+grant execute on function public.confirm_mercadopago_payment(text, text, text, numeric, text, timestamptz, text, jsonb) to service_role;
+grant execute on function public.mark_mercadopago_order_error(text, jsonb) to service_role;

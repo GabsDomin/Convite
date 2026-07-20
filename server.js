@@ -1,41 +1,40 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(__dirname);
+const assetsRoot = resolve(root, "assets");
 const port = Number(process.env.PORT || 3000);
+const maxJsonBodyBytes = 64 * 1024;
+const rateLimitStore = new Map();
+
+class HttpError extends Error {
+  constructor(statusCode, message, headers = {}) {
+    super(message);
+    this.statusCode = statusCode;
+    this.headers = headers;
+  }
+}
 
 function firstEnv(...names) {
   for (const name of names) {
-    const value = process.env[name];
+    const value = process.env[name]?.trim();
     if (value) return value;
   }
 
   return "";
 }
 
-const supabaseUrl = firstEnv(
-  "SUPABASE_URL",
-  "VITE_SUPABASE_URL",
-  "NEXT_PUBLIC_SUPABASE_URL",
-  "PUBLIC_SUPABASE_URL",
-);
-const supabaseKey = firstEnv(
-  "SUPABASE_ANON_KEY",
-  "SUPABASE_KEY",
-  "VITE_SUPABASE_ANON_KEY",
-  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-  "PUBLIC_SUPABASE_ANON_KEY",
-);
+const supabaseUrl = firstEnv("SUPABASE_URL");
+const supabaseServiceRoleKey = firstEnv("SUPABASE_SERVICE_ROLE_KEY");
 const mercadoPagoAccessToken = firstEnv("MERCADO_PAGO_ACCESS_TOKEN", "MP_ACCESS_TOKEN");
-const mercadoPagoPublicKey = firstEnv("NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY", "MERCADO_PAGO_PUBLIC_KEY");
-const mercadoPagoWebhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET || "";
-const siteUrl = firstEnv("SITE_URL", "FRONTEND_URL", "PUBLIC_FRONTEND_URL");
-const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL");
-const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
+const mercadoPagoWebhookSecret = firstEnv("MERCADO_PAGO_WEBHOOK_SECRET");
+const siteUrl = firstEnv("SITE_URL", "FRONTEND_URL", "PUBLIC_FRONTEND_URL").replace(/\/+$/, "");
+const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL").replace(/\/+$/, "");
+const hasSupabaseConfig = Boolean(supabaseUrl && supabaseServiceRoleKey);
 const hasMercadoPagoConfig = Boolean(mercadoPagoAccessToken);
 const mercadoPagoMode = mercadoPagoAccessToken.startsWith("TEST-") ? "sandbox" : "production";
 
@@ -53,28 +52,71 @@ const mimeTypes = {
 
 const noCacheExtensions = new Set([".html", ".css", ".js"]);
 const rangeEnabledExtensions = new Set([".mp3"]);
+const publicFiles = new Map([
+  ["/", resolve(root, "index.html")],
+  ["/index.html", resolve(root, "index.html")],
+  ["/styles.css", resolve(root, "styles.css")],
+  ["/script.js", resolve(root, "script.js")],
+  ["/pagamento/sucesso", resolve(root, "pagamento", "sucesso", "index.html")],
+  ["/pagamento/sucesso/", resolve(root, "pagamento", "sucesso", "index.html")],
+  ["/pagamento/erro", resolve(root, "pagamento", "erro", "index.html")],
+  ["/pagamento/erro/", resolve(root, "pagamento", "erro", "index.html")],
+  ["/pagamento/pendente", resolve(root, "pagamento", "pendente", "index.html")],
+  ["/pagamento/pendente/", resolve(root, "pagamento", "pendente", "index.html")],
+]);
 
-function resolveRequestPath(url) {
-  const pathname = decodeURIComponent(new URL(url, `http://localhost:${port}`).pathname);
-  const cleanPath = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
-  const requestedPath = cleanPath === "/" || cleanPath === "\\" ? "index.html" : cleanPath.replace(/^[/\\]/, "");
-  const filePath = resolve(join(root, requestedPath));
+const securityHeaders = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    "media-src 'self'",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "upgrade-insecure-requests",
+  ].join("; "),
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
 
-  if (!filePath.startsWith(root)) return null;
-  return filePath;
+function responseHeaders(extraHeaders = {}) {
+  return { ...securityHeaders, ...extraHeaders };
 }
 
-function sendJson(response, statusCode, payload) {
-  response.writeHead(statusCode, {
+function resolvePublicFile(pathname) {
+  const exactFile = publicFiles.get(pathname);
+  if (exactFile) return exactFile;
+  if (!pathname.startsWith("/assets/")) return null;
+
+  try {
+    const relativePath = decodeURIComponent(pathname.slice("/assets/".length));
+    const filePath = resolve(assetsRoot, relativePath);
+    if (!filePath.startsWith(`${assetsRoot}${sep}`)) return null;
+    return mimeTypes[extname(filePath).toLowerCase()] ? filePath : null;
+  } catch {
+    return null;
+  }
+}
+
+function sendJson(response, statusCode, payload, extraHeaders = {}) {
+  response.writeHead(statusCode, responseHeaders({
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-  });
+    ...extraHeaders,
+  }));
   response.end(JSON.stringify(payload));
 }
 
 function getRequestOrigin(request) {
-  const host = request.headers.host || `localhost:${port}`;
-  const protocol = request.headers["x-forwarded-proto"] || (host.includes("localhost") ? "http" : "https");
+  const host = request.headers["x-forwarded-host"] || request.headers.host || `localhost:${port}`;
+  const protocol = request.headers["x-forwarded-proto"] || (String(host).includes("localhost") ? "http" : "https");
   return `${protocol}://${host}`;
 }
 
@@ -86,11 +128,114 @@ function getPublicBackendUrl(request) {
   return backendUrl || getRequestOrigin(request);
 }
 
+function getClientIp(request) {
+  const forwarded = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || request.socket.remoteAddress || "unknown";
+}
+
+function enforceRateLimit(request, scope, limit, windowMs) {
+  const now = Date.now();
+  const key = `${scope}:${getClientIp(request)}`;
+  let entry = rateLimitStore.get(key);
+
+  if (!entry || entry.resetAt <= now) {
+    entry = { count: 0, resetAt: now + windowMs };
+    rateLimitStore.set(key, entry);
+  }
+
+  entry.count += 1;
+  if (entry.count > limit) {
+    const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+    throw new HttpError(429, "Muitas tentativas. Aguarde um pouco e tente novamente.", {
+      "Retry-After": String(retryAfter),
+    });
+  }
+
+  if (rateLimitStore.size > 2_000) {
+    for (const [storedKey, storedEntry] of rateLimitStore) {
+      if (storedEntry.resetAt <= now) rateLimitStore.delete(storedKey);
+    }
+  }
+}
+
+function validateSameOriginRequest(request) {
+  const origin = request.headers.origin;
+  if (!origin) return;
+
+  try {
+    const requestOrigin = new URL(getRequestOrigin(request));
+    const browserOrigin = new URL(String(origin));
+    if (requestOrigin.host !== browserOrigin.host) {
+      throw new HttpError(403, "Origem da solicitação não permitida.");
+    }
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(403, "Origem da solicitação inválida.");
+  }
+}
+
 async function readJsonBody(request) {
+  const declaredLength = Number(request.headers["content-length"] || 0);
+  if (declaredLength > maxJsonBodyBytes) {
+    throw new HttpError(413, "Solicitação muito grande.");
+  }
+
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  let receivedBytes = 0;
+  for await (const chunk of request) {
+    receivedBytes += chunk.length;
+    if (receivedBytes > maxJsonBodyBytes) {
+      throw new HttpError(413, "Solicitação muito grande.");
+    }
+    chunks.push(chunk);
+  }
+
   const rawBody = Buffer.concat(chunks).toString("utf8");
-  return rawBody ? JSON.parse(rawBody) : {};
+  if (!rawBody) return {};
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new HttpError(400, "JSON inválido.");
+  }
+}
+
+function requireText(value, label, { min = 1, max = 120 } = {}) {
+  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (text.length < min) throw new HttpError(400, `${label} obrigatório.`);
+  if (text.length > max) throw new HttpError(400, `${label} muito longo.`);
+  return text;
+}
+
+function optionalText(value, label, max) {
+  const text = String(value ?? "").trim();
+  if (text.length > max) throw new HttpError(400, `${label} muito longo.`);
+  return text || null;
+}
+
+function requireGiftId(value) {
+  const giftId = String(value ?? "").trim();
+  if (!/^[a-z0-9][a-z0-9-]{0,99}$/i.test(giftId)) {
+    throw new HttpError(400, "Presente inválido.");
+  }
+  return giftId;
+}
+
+function requireAmount(value) {
+  const amount = Number(value);
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1_000_000) {
+    throw new HttpError(400, "Valor inválido.");
+  }
+  return amount;
+}
+
+function optionalEmail(value) {
+  const email = String(value ?? "").trim();
+  if (!email) return null;
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpError(400, "E-mail inválido.");
+  }
+  return email;
 }
 
 async function callSupabaseRpc(functionName, payload = {}) {
@@ -99,8 +244,8 @@ async function callSupabaseRpc(functionName, payload = {}) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "apikey": supabaseKey,
-      "Authorization": `Bearer ${supabaseKey}`,
+      "apikey": supabaseServiceRoleKey,
+      "Authorization": `Bearer ${supabaseServiceRoleKey}`,
     },
     body: JSON.stringify(payload),
   });
@@ -119,8 +264,8 @@ async function readSupabaseTable(path) {
   const endpoint = new URL(`/rest/v1/${path}`, supabaseUrl);
   const supabaseResponse = await fetch(endpoint, {
     headers: {
-      "apikey": supabaseKey,
-      "Authorization": `Bearer ${supabaseKey}`,
+      "apikey": supabaseServiceRoleKey,
+      "Authorization": `Bearer ${supabaseServiceRoleKey}`,
     },
   });
   const responseText = await supabaseResponse.text();
@@ -132,11 +277,6 @@ async function readSupabaseTable(path) {
   }
 
   return data;
-}
-
-function isValidEmail(value) {
-  const email = String(value || "").trim();
-  return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function normalizeImageUrl(value) {
@@ -153,7 +293,7 @@ function normalizeImageUrl(value) {
       return `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileMatch[1])}&sz=w700`;
     }
 
-    return ["http:", "https:"].includes(parsedUrl.protocol) ? parsedUrl.href : "";
+    return parsedUrl.protocol === "https:" ? parsedUrl.href : "";
   } catch {
     return "";
   }
@@ -178,7 +318,9 @@ function parseMercadoPagoSignature(headerValue) {
 }
 
 function validateMercadoPagoWebhookSignature(request, body) {
-  if (!mercadoPagoWebhookSecret) return;
+  if (!mercadoPagoWebhookSecret) {
+    throw new HttpError(503, "Webhook do Mercado Pago não está configurado.");
+  }
 
   const signature = parseMercadoPagoSignature(request.headers["x-signature"]);
   const requestId = request.headers["x-request-id"];
@@ -188,8 +330,8 @@ function validateMercadoPagoWebhookSignature(request, body) {
     || body?.data?.id
     || body?.id;
 
-  if (!signature.ts || !signature.v1 || !requestId || !dataId) {
-    throw new Error("Assinatura do webhook Mercado Pago ausente.");
+  if (!signature.ts || !/^[a-f0-9]{64}$/i.test(signature.v1 || "") || !requestId || !dataId) {
+    throw new HttpError(401, "Assinatura do webhook Mercado Pago ausente ou inválida.");
   }
 
   const manifest = `id:${String(dataId).toLowerCase()};request-id:${requestId};ts:${signature.ts};`;
@@ -199,17 +341,14 @@ function validateMercadoPagoWebhookSignature(request, body) {
   const expectedBuffer = Buffer.from(expected, "hex");
   const receivedBuffer = Buffer.from(signature.v1, "hex");
 
-  if (
-    expectedBuffer.length !== receivedBuffer.length
-    || !timingSafeEqual(expectedBuffer, receivedBuffer)
-  ) {
-    throw new Error("Assinatura do webhook Mercado Pago invalida.");
+  if (!timingSafeEqual(expectedBuffer, receivedBuffer)) {
+    throw new HttpError(401, "Assinatura do webhook Mercado Pago inválida.");
   }
 }
 
 async function createMercadoPagoPreference(order, request) {
   if (!hasMercadoPagoConfig) {
-    throw new Error("Pagamento por cartao ainda nao esta configurado.");
+    throw new HttpError(503, "Pagamento por cartão ainda não está configurado.");
   }
 
   const publicFrontendUrl = getPublicFrontendUrl(request);
@@ -240,6 +379,9 @@ async function createMercadoPagoPreference(order, request) {
         pending: `${publicFrontendUrl}/pagamento/pendente`,
       },
       auto_return: "approved",
+      expires: true,
+      expiration_date_from: new Date().toISOString(),
+      expiration_date_to: new Date(order.expires_at).toISOString(),
       external_reference: String(order.id),
       notification_url: `${getPublicBackendUrl(request)}/api/webhooks/mercadopago?source_news=webhooks`,
     }),
@@ -253,12 +395,12 @@ async function createMercadoPagoPreference(order, request) {
       p_payload: data,
     }).catch(() => {});
 
-    const message = data?.message || data?.error || "Erro ao criar preferencia no Mercado Pago.";
+    const message = data?.message || data?.error || "Erro ao criar preferência no Mercado Pago.";
     throw new Error(message);
   }
 
   if (!data.init_point) {
-    throw new Error("O Mercado Pago nao retornou o link de pagamento.");
+    throw new Error("O Mercado Pago não retornou o link de pagamento.");
   }
 
   data.checkout_url = mercadoPagoMode === "sandbox" && data.sandbox_init_point
@@ -303,9 +445,7 @@ async function getPublicGifts() {
 }
 
 function normalizeGift(gift) {
-  const quotaOptions = Array.isArray(gift.quota_options)
-    ? gift.quota_options
-    : [];
+  const quotaOptions = Array.isArray(gift.quota_options) ? gift.quota_options : [];
 
   return {
     id: gift.id,
@@ -326,70 +466,74 @@ function normalizeGift(gift) {
 async function handleApi(request, response, pathname) {
   if (request.method === "GET" && pathname === "/api/config") {
     sendJson(response, 200, {
-      supabaseUrl: supabaseUrl || "",
-      supabaseAnonKey: supabaseKey || "",
       supabaseConfigured: hasSupabaseConfig,
       mercadoPagoConfigured: hasMercadoPagoConfig,
-      mercadoPagoPublicKey,
       mercadoPagoMode: hasMercadoPagoConfig ? mercadoPagoMode : "",
     });
     return true;
   }
 
   if (!hasSupabaseConfig) {
-    sendJson(response, 503, { error: "Supabase nao esta configurado no servidor." });
+    sendJson(response, 503, { error: "Supabase não está configurado no servidor." });
     return true;
   }
 
   try {
     if (request.method === "GET" && pathname === "/api/gifts") {
+      enforceRateLimit(request, "gifts", 120, 60_000);
       const gifts = await getPublicGifts();
       sendJson(response, 200, { gifts: gifts.map(normalizeGift) });
       return true;
     }
 
     if (request.method === "POST" && pathname === "/api/rsvp") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "rsvp", 20, 10 * 60_000);
       const body = await readJsonBody(request);
+      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 120 });
+      const partySize = String(body.partySize ?? "").trim();
+      if (!["Somente eu", "Eu e meus filhos"].includes(partySize)) {
+        throw new HttpError(400, "Quantidade de pessoas inválida.");
+      }
+
       const rsvp = await callSupabaseRpc("confirm_rsvp", {
-        p_guest_name: body.guestName,
-        p_party_size: body.partySize,
+        p_guest_name: guestName,
+        p_party_size: partySize,
       });
       sendJson(response, 200, { rsvp: rsvp?.[0] });
       return true;
     }
 
     if (request.method === "POST" && pathname === "/api/gifts/reserve") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "reserve", 20, 10 * 60_000);
       const body = await readJsonBody(request);
       const reservation = await callSupabaseRpc("reserve_gift", {
-        p_gift_id: body.giftId,
-        p_guest_name: body.guestName,
-        p_amount: body.amount ?? null,
+        p_gift_id: requireGiftId(body.giftId),
+        p_guest_name: requireText(body.guestName, "Nome", { min: 2, max: 120 }),
+        p_amount: body.amount == null ? null : requireAmount(body.amount),
       });
       sendJson(response, 200, { reservation: reservation?.[0] });
       return true;
     }
 
     if (request.method === "POST" && pathname === "/api/mercadopago/create-preference") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "payment", 8, 10 * 60_000);
       if (!hasMercadoPagoConfig) {
-        throw new Error("Pagamento por cartao ainda nao esta configurado.");
+        throw new HttpError(503, "Pagamento por cartão ainda não está configurado.");
       }
 
       const body = await readJsonBody(request);
-      if (!body.giftId) throw new Error("Presente obrigatorio.");
-      if (!body.giftName) throw new Error("Nome do presente obrigatorio.");
-      if (!Number(body.amount) || Number(body.amount) <= 0) throw new Error("Valor invalido.");
-      if (!body.buyerName) throw new Error("Nome obrigatorio.");
-      if (body.buyerEmail && !isValidEmail(body.buyerEmail)) throw new Error("E-mail invalido.");
-
       const order = await callSupabaseRpc("create_mercadopago_order", {
-        p_gift_id: body.giftId,
-        p_buyer_name: body.buyerName,
-        p_buyer_email: body.buyerEmail || null,
-        p_message: body.message || null,
-        p_amount: body.amount ?? null,
+        p_gift_id: requireGiftId(body.giftId),
+        p_buyer_name: requireText(body.buyerName, "Nome", { min: 2, max: 120 }),
+        p_buyer_email: optionalEmail(body.buyerEmail),
+        p_message: optionalText(body.message, "Mensagem", 500),
+        p_amount: requireAmount(body.amount),
       });
       if (!order?.[0]) {
-        throw new Error("Nao foi possivel criar o pedido de pagamento.");
+        throw new Error("Não foi possível criar o pedido de pagamento.");
       }
 
       const preference = await createMercadoPagoPreference(order[0], request);
@@ -404,10 +548,17 @@ async function handleApi(request, response, pathname) {
     }
 
     if (request.method === "POST" && pathname === "/api/webhooks/mercadopago") {
+      enforceRateLimit(request, "mercadopago-webhook", 120, 60_000);
+      if (!hasMercadoPagoConfig) {
+        throw new HttpError(503, "Mercado Pago não está configurado.");
+      }
+
       const body = await readJsonBody(request);
       validateMercadoPagoWebhookSignature(request, body);
 
-      const paymentId = body?.data?.id || body?.id || new URL(request.url || "/", `http://localhost:${port}`).searchParams.get("data.id");
+      const paymentId = body?.data?.id
+        || body?.id
+        || new URL(request.url || "/", `http://localhost:${port}`).searchParams.get("data.id");
       if (paymentId) {
         const payment = await getMercadoPagoPayment(paymentId);
         const status = normalizeMercadoPagoStatus(payment.status);
@@ -432,28 +583,40 @@ async function handleApi(request, response, pathname) {
 
     return false;
   } catch (error) {
-    sendJson(response, 400, { error: error.message || "Erro ao processar solicitação." });
+    const statusCode = error instanceof HttpError ? error.statusCode : 400;
+    const headers = error instanceof HttpError ? error.headers : {};
+    sendJson(response, statusCode, { error: error.message || "Erro ao processar solicitação." }, headers);
     return true;
   }
 }
 
-createServer(async (request, response) => {
-  const pathname = new URL(request.url || "/", `http://localhost:${port}`).pathname;
+const server = createServer(async (request, response) => {
+  let pathname;
+  try {
+    pathname = new URL(request.url || "/", `http://localhost:${port}`).pathname;
+  } catch {
+    response.writeHead(400, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
+    response.end("Solicitação inválida");
+    return;
+  }
 
   if (pathname.startsWith("/api/")) {
     const handled = await handleApi(request, response, pathname);
     if (handled) return;
   }
 
-  const paymentPage = ["/pagamento/sucesso", "/pagamento/erro", "/pagamento/pendente"].includes(pathname)
-    ? resolve(join(root, pathname.replace(/^\/+/, ""), "index.html"))
-    : null;
-  const filePath = paymentPage
-    ? paymentPage
-    : resolveRequestPath(request.url || "/");
+  if (!["GET", "HEAD"].includes(request.method || "")) {
+    response.writeHead(405, responseHeaders({
+      "Content-Type": "text/plain; charset=utf-8",
+      "Allow": "GET, HEAD",
+    }));
+    response.end("Método não permitido");
+    return;
+  }
 
+  const filePath = resolvePublicFile(pathname);
   if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
-    response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    response.writeHead(404, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
     response.end("Arquivo não encontrado");
     return;
   }
@@ -463,43 +626,46 @@ createServer(async (request, response) => {
   const contentType = mimeTypes[extension] || "application/octet-stream";
 
   if (rangeEnabledExtensions.has(extension) && request.headers.range) {
-    const range = request.headers.range;
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    const match = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range);
 
     if (match) {
       const start = match[1] ? Number(match[1]) : 0;
       const end = match[2] ? Number(match[2]) : fileSize - 1;
 
       if (start <= end && start >= 0 && end < fileSize) {
-        response.writeHead(206, {
+        response.writeHead(206, responseHeaders({
           "Content-Type": contentType,
           "Content-Length": end - start + 1,
           "Content-Range": `bytes ${start}-${end}/${fileSize}`,
           "Accept-Ranges": "bytes",
           "Cache-Control": "public, max-age=31536000, immutable",
-        });
-        createReadStream(filePath, { start, end }).pipe(response);
+        }));
+        if (request.method === "HEAD") response.end();
+        else createReadStream(filePath, { start, end }).pipe(response);
         return;
       }
     }
 
-    response.writeHead(416, {
+    response.writeHead(416, responseHeaders({
       "Content-Range": `bytes */${fileSize}`,
       "Accept-Ranges": "bytes",
-    });
+    }));
     response.end();
     return;
   }
 
-  response.writeHead(200, {
+  response.writeHead(200, responseHeaders({
     "Content-Type": contentType,
     "Content-Length": fileSize,
     "Accept-Ranges": rangeEnabledExtensions.has(extension) ? "bytes" : "none",
     "Cache-Control": noCacheExtensions.has(extension)
       ? "no-cache, no-store, must-revalidate"
       : "public, max-age=31536000, immutable",
-  });
-  createReadStream(filePath).pipe(response);
-}).listen(port, () => {
+  }));
+  if (request.method === "HEAD") response.end();
+  else createReadStream(filePath).pipe(response);
+});
+
+server.listen(port, () => {
   console.log(`Convite rodando na porta ${port}`);
 });

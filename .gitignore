@@ -1,3 +1,7 @@
 .make_extract/
 node_modules/
 .sixth/
+.vercel/
+.env
+.env.*
+!.env.example

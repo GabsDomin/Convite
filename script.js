@@ -114,13 +114,16 @@ function formatCurrency(value) {
   }).format(value);
 }
 
-function escapeAttribute(value) {
-  return String(value || "")
+function escapeHtml(value) {
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
+
+const escapeAttribute = escapeHtml;
 
 function normalizeImageUrl(value) {
   const url = String(value || "").trim();
@@ -135,7 +138,7 @@ function normalizeImageUrl(value) {
       return `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileMatch[1])}&sz=w700`;
     }
 
-    return ["http:", "https:"].includes(parsedUrl.protocol) ? parsedUrl.href : "";
+    return parsedUrl.protocol === "https:" ? parsedUrl.href : "";
   } catch {
     return "";
   }
@@ -146,14 +149,14 @@ function renderGiftImage(gift) {
 
   return `
     <figure class="gift-image">
-      <img src="${escapeAttribute(gift.imageUrl)}" alt="${escapeAttribute(gift.name)}" loading="lazy" onerror="this.closest('.gift-image')?.remove(); this.closest('.gift-card')?.classList.remove('has-image');">
+      <img src="${escapeAttribute(gift.imageUrl)}" alt="${escapeAttribute(gift.name)}" loading="lazy">
     </figure>
   `;
 }
 
 function renderGiftDescription(gift) {
   const className = gift.imageUrl ? "gift-description image-description" : "gift-description";
-  return `<p class="${className}">${gift.text}</p>`;
+  return `<p class="${className}">${escapeHtml(gift.text)}</p>`;
 }
 
 async function requestJson(url, options = {}) {
@@ -437,8 +440,8 @@ function renderGiftMessage(title, text) {
   giftFilters.innerHTML = "";
   giftGrid.innerHTML = `
     <div class="gift-message">
-      <h3>${title}</h3>
-      <p>${text}</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(text)}</p>
     </div>
   `;
 }
@@ -490,9 +493,10 @@ function normalizeGiftForUi(gift) {
 
 function renderGiftCard(gift) {
   const reserved = gift.status === "reserved";
+  const contributed = Number.isFinite(Number(gift.contributed)) ? Number(gift.contributed) : 0;
   const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
   const buttonText = gift.type === "quota" ? "Contribuir" : "Presentear";
-  const displayContributed = gift.type === "quota" && reserved ? Math.max(gift.contributed, gift.goal) : gift.contributed;
+  const displayContributed = gift.type === "quota" && reserved ? Math.max(contributed, gift.goal) : contributed;
   const progressValue = gift.goal > 0 ? Math.min(100, Math.round((displayContributed / gift.goal) * 100)) : 0;
   const quotaCompleted = gift.type === "quota" && progressValue >= 100;
   const showReserved = gift.type === "quota" ? quotaCompleted : reserved;
@@ -503,14 +507,14 @@ function renderGiftCard(gift) {
       <div class="gift-icon">${giftIcon()}</div>
       ${renderGiftImage(gift)}
       <div class="gift-card-main">
-        <span class="gift-category">${gift.type === "quota" ? "Cota da casa" : gift.category}</span>
-        <h4>${gift.name}</h4>
+        <span class="gift-category">${gift.type === "quota" ? "Cota da casa" : escapeHtml(gift.category)}</span>
+        <h4>${escapeHtml(gift.name)}</h4>
         <p class="gift-price">${valueText}</p>
         ${gift.imageUrl ? "" : renderGiftDescription(gift)}
       </div>
       ${gift.imageUrl ? renderGiftDescription(gift) : ""}
       ${gift.type === "quota" && gift.options.length ? `
-        <div class="quota-progress ${quotaCompleted ? "completed" : ""}" aria-label="Progresso da cota de ${gift.name}">
+        <div class="quota-progress ${quotaCompleted ? "completed" : ""}" aria-label="Progresso da cota de ${escapeAttribute(gift.name)}">
           <div class="quota-progress-text">
             <span>${formatCurrency(Math.min(displayContributed, gift.goal))} arrecadados</span>
             <strong>${quotaCompleted ? "Concluída" : `${progressValue}%`}</strong>
@@ -520,14 +524,14 @@ function renderGiftCard(gift) {
           </div>
           <p>${quotaCompleted ? "Todas as cotas foram presenteadas." : `Faltam ${formatCurrency(Math.max(gift.goal - displayContributed, 0))}`}</p>
         </div>
-        <div class="quota-options" aria-label="Opções de cota para ${gift.name}">
+        <div class="quota-options" aria-label="Opções de cota para ${escapeAttribute(gift.name)}">
           ${gift.options.map((option) => `<span>${formatCurrency(option)}</span>`).join("")}
         </div>
       ` : ""}
       <div class="gift-footer">
         <span class="badge ${showReserved ? "reserved" : "available"}">${showReserved ? "Reservado" : "Disponível"}</span>
         ${showActionButton ? `
-          <button class="button ${reserved ? "secondary" : "primary"}" data-gift-id="${gift.id}" ${reserved ? "disabled" : ""}>
+          <button class="button ${reserved ? "secondary" : "primary"}" data-gift-id="${escapeAttribute(gift.id)}" ${reserved ? "disabled" : ""}>
             ${reserved ? "Já escolhido" : buttonText}
           </button>
         ` : ""}
@@ -556,7 +560,7 @@ function showSuccess(message) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 6-11 11-5-5" /></svg>
     </div>
     <h2 id="modal-title" class="success-title">Recebido com carinho!</h2>
-    <p>${message}</p>
+    <p>${escapeHtml(message)}</p>
     <div class="modal-actions">
       <button class="button primary" data-close-modal>Fechar</button>
     </div>
@@ -569,7 +573,7 @@ function showError(message) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
     </div>
     <h2 id="modal-title" class="success-title">Não foi possível salvar</h2>
-    <p>${message}</p>
+    <p>${escapeHtml(message)}</p>
     <div class="modal-actions">
       <button class="button primary" data-close-modal>Fechar</button>
     </div>
@@ -608,15 +612,20 @@ function openRsvpModal() {
 function openGiftModal(gift) {
   const isQuota = gift.type === "quota";
   const hasOnlinePayment = hasOnlinePaymentConfigured();
+  const giftName = escapeHtml(gift.name);
 
   openModal(`
     <div class="modal-icon">${giftIcon()}</div>
     <h2 id="modal-title">${isQuota ? "Contribuir com cota" : "Escolher presente"}</h2>
-    <p>${isQuota ? `Escolha uma cota, informe seu nome e siga com a forma de pagamento que preferir para: <strong>${gift.name}</strong>.` : `Informe seu nome e escolha como deseja presentear: <strong>${gift.name}</strong>.`}</p>
-    <form data-gift-form="${gift.id}">
+    <p>${isQuota ? `Escolha uma cota, informe seu nome e siga com a forma de pagamento que preferir para: <strong>${giftName}</strong>.` : `Informe seu nome e escolha como deseja presentear: <strong>${giftName}</strong>.`}</p>
+    <form data-gift-form="${escapeAttribute(gift.id)}">
       <label>
         Seu nome
         <input name="guestName" required autocomplete="name" placeholder="Digite seu nome" />
+      </label>
+      <label>
+        Seu e-mail <span class="optional-label">opcional</span>
+        <input name="buyerEmail" type="email" autocomplete="email" placeholder="Para o comprovante do pagamento online" />
       </label>
       <label>
         Mensagem para os noivos <span class="optional-label">opcional</span>
@@ -752,7 +761,6 @@ document.addEventListener("submit", async (event) => {
           method: "POST",
           body: JSON.stringify({
             giftId: gift?.id,
-            giftName: gift?.name,
             amount: gift?.type === "quota" ? quotaValue : gift?.value,
             buyerName: guestName,
             buyerEmail,
@@ -794,6 +802,17 @@ document.addEventListener("submit", async (event) => {
 modal.addEventListener("click", (event) => {
   if (event.target === modal) closeModal();
 });
+
+document.addEventListener("error", (event) => {
+  const image = event.target instanceof HTMLImageElement
+    ? event.target.closest(".gift-image img")
+    : null;
+  if (!image) return;
+
+  const card = image.closest(".gift-card");
+  image.closest(".gift-image")?.remove();
+  card?.classList.remove("has-image");
+}, true);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && modal.classList.contains("open")) closeModal();
