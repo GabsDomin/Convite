@@ -127,6 +127,7 @@ test("local da celebração mostra o endereço e abre o Google Maps com seguran�
 
   assert.match(html, /Rua José Marques Ribeiro, 521/);
   assert.match(html, /Guaturinho · Cajamar\/SP · CEP 07750-000/);
+  assert.match(html, /class="event-location-card"[\s\S]*?Rua José Marques Ribeiro, 521 · CEP 07750-000/);
   assert.match(html, /href="https:\/\/maps\.app\.goo\.gl\/rGEtAHSXq4ArMM4o7"/);
   assert.match(html, /target="_blank"/);
   assert.match(html, /rel="noopener noreferrer"/);
