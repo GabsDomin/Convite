@@ -56,6 +56,9 @@ const rangeEnabledExtensions = new Set([".mp3"]);
 const indexDocument = { content: readFileSync(new URL("./index.html", import.meta.url)), extension: ".html" };
 const stylesDocument = { content: readFileSync(new URL("./styles.css", import.meta.url)), extension: ".css" };
 const scriptDocument = { content: readFileSync(new URL("./script.js", import.meta.url)), extension: ".js" };
+const albumDocument = { content: readFileSync(new URL("./album.html", import.meta.url)), extension: ".html" };
+const albumStylesDocument = { content: readFileSync(new URL("./album.css", import.meta.url)), extension: ".css" };
+const albumScriptDocument = { content: readFileSync(new URL("./album.js", import.meta.url)), extension: ".js" };
 const paymentSuccessDocument = {
   content: readFileSync(new URL("./pagamento/sucesso/index.html", import.meta.url)),
   extension: ".html",
@@ -73,6 +76,11 @@ const publicFiles = new Map([
   ["/index.html", indexDocument],
   ["/styles.css", stylesDocument],
   ["/script.js", scriptDocument],
+  ["/album", albumDocument],
+  ["/album/", albumDocument],
+  ["/album.html", albumDocument],
+  ["/album.css", albumStylesDocument],
+  ["/album.js", albumScriptDocument],
   ["/pagamento/sucesso", paymentSuccessDocument],
   ["/pagamento/sucesso/", paymentSuccessDocument],
   ["/pagamento/erro", paymentErrorDocument],
@@ -87,8 +95,8 @@ const securityHeaders = {
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src https://fonts.gstatic.com",
-    "img-src 'self' data: https:",
-    "media-src 'self'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",

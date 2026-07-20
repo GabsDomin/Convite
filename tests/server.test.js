@@ -63,7 +63,16 @@ after(async () => {
 });
 
 test("serve somente os arquivos públicos esperados", async () => {
-  for (const pathname of ["/", "/styles.css", "/script.js", "/assets/favicon.png", "/pagamento/sucesso"]) {
+  for (const pathname of [
+    "/",
+    "/styles.css",
+    "/script.js",
+    "/album",
+    "/album.css",
+    "/album.js",
+    "/assets/favicon.png",
+    "/pagamento/sucesso",
+  ]) {
     const response = await fetch(`${baseUrl}${pathname}`);
     assert.equal(response.status, 200, pathname);
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
@@ -193,6 +202,22 @@ test("confirmação diferencia indivíduo, casal e responsável com menores", as
   assert.match(migration, /add column if not exists additional_guest_names text\[\]/i);
   assert.match(migration, /p_additional_guest_names text\[\] default/i);
   assert.match(migration, /cardinality\(clean_additional_names\) <> 1/i);
+});
+
+test("protótipo do álbum publica memórias imediatamente e deixa clara a persistência local", async () => {
+  const [index, album, albumScript] = await Promise.all([
+    readFile(new URL("../index.html", import.meta.url), "utf8"),
+    readFile(new URL("../album.html", import.meta.url), "utf8"),
+    readFile(new URL("../album.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(index, /href="\/album"[^>]*>Conhecer o álbum coletivo</i);
+  assert.match(album, /Os novos envios aparecem imediatamente, sem fila de aprovação\./i);
+  assert.match(album, /Os arquivos enviados nesta tela ficam somente neste navegador/i);
+  assert.match(album, /Até 10 arquivos · fotos de 15 MB · vídeos de 50 MB/i);
+  assert.match(albumScript, /memoryGrid\.prepend\(fragment\)/);
+  assert.match(albumScript, /URL\.createObjectURL\(file\)/);
+  assert.doesNotMatch(album, /on(?:click|change|submit)\s*=/i);
 });
 
 test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", async () => {

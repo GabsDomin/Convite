@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Protótipo do álbum coletivo do casamento de Gabriel e Halanaia." />
+    <title>Álbum coletivo | Gabriel &amp; Halanaia</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Allura&family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/png" href="/assets/favicon.png" />
+    <link rel="stylesheet" href="/album.css?v=1" />
+  </head>
+  <body>
+    <header class="album-topbar">
+      <a class="back-link" href="/" aria-label="Voltar ao convite">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+        Voltar ao convite
+      </a>
+      <a class="album-signature" href="/">Gabriel &amp; Halanaia</a>
+      <button class="button primary compact" type="button" data-open-upload>Compartilhar memórias</button>
+    </header>
+
+    <main>
+      <section class="album-hero" aria-labelledby="album-title">
+        <div class="album-hero-copy">
+          <span class="eyebrow">Álbum coletivo</span>
+          <h1 id="album-title">Memórias do nosso dia</h1>
+          <p>
+            Cada olhar guarda um momento diferente. Compartilhe suas fotos e vídeos e acompanhe,
+            junto com os outros convidados, as lembranças dessa celebração.
+          </p>
+          <div class="album-hero-actions">
+            <button class="button primary" type="button" data-open-upload>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
+              </svg>
+              Enviar fotos e vídeos
+            </button>
+            <a class="button secondary" href="#galeria">Ver galeria</a>
+          </div>
+        </div>
+        <div class="album-hero-mark" aria-hidden="true">
+          <span>G</span><b>&amp;</b><span>H</span>
+          <small>28 · 11 · 2026</small>
+        </div>
+      </section>
+
+      <aside class="prototype-notice" aria-label="Aviso sobre o protótipo">
+        <span>Protótipo navegável</span>
+        <p>Os arquivos enviados nesta tela ficam somente neste navegador e desaparecem ao atualizar a página.</p>
+      </aside>
+
+      <section class="gallery-section" id="galeria" aria-labelledby="gallery-title">
+        <div class="gallery-heading">
+          <div>
+            <span class="eyebrow">Compartilhado por todos</span>
+            <h2 id="gallery-title">Nossa galeria</h2>
+            <p>Os novos envios aparecem imediatamente, sem fila de aprovação.</p>
+          </div>
+          <button class="button primary gallery-upload" type="button" data-open-upload>+ Adicionar memórias</button>
+        </div>
+
+        <div class="gallery-toolbar">
+          <div class="gallery-filters" aria-label="Filtrar memórias">
+            <button type="button" data-filter="Todos" aria-pressed="true">Todos</button>
+            <button type="button" data-filter="Preparativos" aria-pressed="false">Preparativos</button>
+            <button type="button" data-filter="Cerimônia" aria-pressed="false">Cerimônia</button>
+            <button type="button" data-filter="Jantar" aria-pressed="false">Jantar</button>
+            <button type="button" data-filter="Festa" aria-pressed="false">Festa</button>
+          </div>
+          <span class="memory-count" data-memory-count>3 espaços de exemplo</span>
+        </div>
+
+        <div class="memory-grid" data-memory-grid>
+          <article class="memory-card memory-card-tall" data-memory-category="Preparativos" data-demo-memory>
+            <div class="memory-placeholder placeholder-preparations" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="m12 3 1.5 5.2L19 10l-5.5 1.8L12 17l-1.5-5.2L5 10l5.5-1.8L12 3Z" /></svg>
+            </div>
+            <div class="memory-caption">
+              <span>Preparativos</span>
+              <strong>Os primeiros momentos</strong>
+              <small>Espaço de exemplo</small>
+            </div>
+          </article>
+
+          <article class="memory-card" data-memory-category="Cerimônia" data-demo-memory>
+            <div class="memory-placeholder placeholder-ceremony" aria-hidden="true">
+              <span>G <b>&amp;</b> H</span>
+              <small>28.11.2026</small>
+            </div>
+            <div class="memory-caption">
+              <span>Cerimônia</span>
+              <strong>O nosso “sim”</strong>
+              <small>Espaço de exemplo</small>
+            </div>
+          </article>
+
+          <article class="memory-card memory-card-wide" data-memory-category="Festa" data-demo-memory>
+            <div class="memory-placeholder placeholder-party" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M8 3v3M16 3v3M5 9h14M7 6h10a2 2 0 0 1 2 2v11H5V8a2 2 0 0 1 2-2Z" /></svg>
+              <span>Uma noite para lembrar</span>
+            </div>
+            <div class="memory-caption">
+              <span>Festa</span>
+              <strong>Memórias compartilhadas</strong>
+              <small>Espaço de exemplo</small>
+            </div>
+          </article>
+        </div>
+
+        <div class="gallery-empty" data-gallery-empty hidden>
+          <span>♡</span>
+          <h3>Nenhuma memória nesta categoria</h3>
+          <p>Escolha outro filtro ou seja a primeira pessoa a compartilhar.</p>
+          <button class="button secondary" type="button" data-open-upload>Enviar uma memória</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="album-footer">
+      <span>Gabriel &amp; Halanaia</span>
+      <p>Obrigado por registrar esse capítulo da nossa história.</p>
+    </footer>
+
+    <dialog class="upload-dialog" data-upload-dialog aria-labelledby="upload-title">
+      <form class="upload-form" data-upload-form>
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">Compartilhe seu olhar</span>
+            <h2 id="upload-title">Adicionar memórias</h2>
+          </div>
+          <button class="dialog-close" type="button" aria-label="Fechar" data-close-upload>×</button>
+        </div>
+
+        <p class="dialog-copy">Assim que o envio terminar, as fotos e vídeos aparecerão na galeria para todos.</p>
+
+        <label>
+          Seu nome
+          <input name="guestName" type="text" maxlength="80" placeholder="Como podemos identificar você?" required />
+        </label>
+
+        <label>
+          Momento
+          <select name="category" required>
+            <option value="Preparativos">Preparativos</option>
+            <option value="Cerimônia">Cerimônia</option>
+            <option value="Jantar">Jantar</option>
+            <option value="Festa">Festa</option>
+          </select>
+        </label>
+
+        <label class="file-drop" data-file-drop>
+          <input
+            name="memories"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime"
+            multiple
+            required
+            data-memory-files
+          />
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14" /></svg>
+          <strong>Escolher fotos e vídeos</strong>
+          <span>Até 10 arquivos · fotos de 15 MB · vídeos de 50 MB</span>
+        </label>
+
+        <div class="selected-files" data-selected-files aria-live="polite"></div>
+        <p class="form-error" data-upload-error role="alert" hidden></p>
+
+        <label class="consent-row">
+          <input name="consent" type="checkbox" required />
+          <span>Confirmo que posso compartilhar estes arquivos no álbum coletivo do casamento.</span>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="button secondary" type="button" data-close-upload>Cancelar</button>
+          <button class="button primary" type="submit">Publicar agora</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="lightbox" data-lightbox aria-label="Visualização da memória">
+      <button class="dialog-close lightbox-close" type="button" aria-label="Fechar" data-close-lightbox>×</button>
+      <div class="lightbox-media" data-lightbox-media></div>
+      <div class="lightbox-caption" data-lightbox-caption></div>
+    </dialog>
+
+    <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
+    <script src="/album.js?v=1" defer></script>
+  </body>
+</html>
