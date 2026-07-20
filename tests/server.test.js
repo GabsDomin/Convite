@@ -49,6 +49,9 @@ before(async () => {
       SUPABASE_SECRET_KEY: "sb_secret_test_secret",
       MERCADO_PAGO_ACCESS_TOKEN: "TEST-token-sem-webhook",
       MERCADO_PAGO_WEBHOOK_SECRET: "",
+      CLOUDINARY_CLOUD_NAME: "cloud-test",
+      CLOUDINARY_API_KEY: "api-key-test",
+      CLOUDINARY_API_SECRET: "api-secret-test",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -98,8 +101,56 @@ test("configuração pública não contém segredos", async () => {
     supabaseConfigured: true,
     mercadoPagoConfigured: false,
     mercadoPagoMode: "",
+    albumConfigured: true,
   });
   assert.equal(JSON.stringify(payload).includes("sb_secret_test_secret"), false);
+  assert.equal(JSON.stringify(payload).includes("api-secret-test"), false);
+});
+
+test("assinatura do upload é curta, vinculada a um arquivo e não expõe segredo", async () => {
+  const response = await fetch(`${baseUrl}/api/album/upload-signature`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      guestName: "Pessoa Teste",
+      category: "Festa",
+      fileName: "foto.jpg",
+      fileType: "image/jpeg",
+      fileSize: 8_000_000,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.cloudName, "cloud-test");
+  assert.equal(payload.apiKey, "api-key-test");
+  assert.match(payload.publicId, /^gab-naia\/album\/[a-f0-9-]+$/);
+  assert.match(payload.signature, /^[a-f0-9]{40}$/);
+  assert.equal(payload.maxFileBytes, 100 * 1024 * 1024);
+  assert.equal(JSON.stringify(payload).includes("api-secret-test"), false);
+});
+
+test("registro do álbum rejeita resposta de armazenamento adulterada", async () => {
+  const response = await fetch(`${baseUrl}/api/album/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      guestName: "Pessoa Teste",
+      category: "Festa",
+      publicId: "gab-naia/album/00000000-0000-4000-8000-000000000000",
+      resourceType: "image",
+      format: "jpg",
+      version: 123456789,
+      bytes: 8_000_000,
+      width: 3024,
+      height: 4032,
+      signature: "0".repeat(40),
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.match(payload.error, /não autenticada/i);
 });
 
 test("rejeita origem externa, entrada inválida e corpo excessivo", async () => {
@@ -207,21 +258,32 @@ test("confirmação diferencia indivíduo, casal e responsável com menores", as
   assert.match(migration, /cardinality\(clean_additional_names\) <> 1/i);
 });
 
-test("protótipo mobile do álbum publica memórias, usa câmera e agrupa stories por convidado", async () => {
-  const [index, album, albumStyles, albumScript, server] = await Promise.all([
+test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa stories por convidado", async () => {
+  const [index, album, albumStyles, albumScript, server, albumSchema] = await Promise.all([
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../album.html", import.meta.url), "utf8"),
     readFile(new URL("../album.css", import.meta.url), "utf8"),
     readFile(new URL("../album.js", import.meta.url), "utf8"),
     readFile(new URL("../server.js", import.meta.url), "utf8"),
+    readFile(new URL("../supabase-album-schema.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(index, /href="\/album"[^>]*>Conhecer o álbum coletivo</i);
   assert.match(album, /Os novos envios aparecem imediatamente, sem fila de aprovação\./i);
-  assert.match(album, /Os arquivos enviados nesta tela ficam somente neste navegador/i);
-  assert.match(album, /Até 10 arquivos · fotos de 15 MB · vídeos de 50 MB/i);
+  assert.match(albumScript, /Os envios desta tela ficam somente neste navegador/i);
+  assert.match(album, /Até 10 arquivos · fotos e vídeos de até 100 MB cada · originais preservados/i);
+  assert.match(album, /data-upload-progress/);
   assert.match(albumScript, /memoryGrid\.prepend\(fragment\)/);
   assert.match(albumScript, /URL\.createObjectURL\(file\)/);
+  assert.match(albumScript, /\/api\/album\/upload-signature/);
+  assert.match(albumScript, /new XMLHttpRequest\(\)/);
+  assert.match(albumScript, /formData\.append\("file", file\)/);
+  assert.match(albumScript, /maximumAlbumFileSize = 100 \* 1024 \* 1024/);
+  assert.match(server, /https:\/\/api\.cloudinary\.com\/v1_1/);
+  assert.match(server, /createCloudinarySignature/);
+  assert.match(server, /Resposta do armazenamento não autenticada/);
+  assert.match(albumSchema, /create table if not exists public\.album_media/i);
+  assert.match(albumSchema, /revoke all on table public\.album_media from anon, authenticated/i);
   assert.match(album, /Stories dos convidados/i);
   assert.match(album, /data-hero-carousel/);
   assert.match(album, /Gabriel[\s\S]*?Halanaia/);
@@ -233,7 +295,7 @@ test("protótipo mobile do álbum publica memórias, usa câmera e agrupa storie
   assert.match(album, /class="mobile-action-bar"/i);
   assert.match(albumStyles, /\.story-viewer[\s\S]*?height:\s*min\(calc\(100vh/i);
   assert.match(albumStyles, /\.memory-grid[\s\S]*?columns:\s*2/i);
-  assert.match(albumScript, /storyGroups\.set\(guestName, \{ slides: newStorySlides \}\)/);
+  assert.match(albumScript, /storyGroups\.set\(guestName, \{ slides \}\)/);
   assert.match(albumScript, /function openStory\(person\)/);
   assert.match(album, /data-open-camera[\s\S]*?Abrir câmera/i);
   assert.match(album, /data-camera-video/);
@@ -254,11 +316,13 @@ test("protótipo mobile do álbum publica memórias, usa câmera e agrupa storie
   assert.match(albumScript, /cameraImageCapture\.getPhotoCapabilities\(\)/);
   assert.match(albumScript, /cameraPhotoSettings[\s\S]*?cameraImageCapture\.takePhoto\(cameraPhotoSettings\)/);
   assert.match(albumScript, /cameraCanvas\.toBlob\(resolve, "image\/jpeg", 0\.96\)/);
-  assert.match(albumScript, /photoMode \? 2560 : 1920/);
+  assert.match(albumScript, /photoMode \? 4096 : 3840/);
   assert.match(albumScript, /cameraVideoTrack\.contentHint = cameraMode === "photo" \? "detail" : "motion"/);
   assert.match(albumScript, /new MediaRecorder\(cameraStream/);
   assert.match(albumScript, /videoBitsPerSecond: getRecordingVideoBitrate\(\)/);
-  assert.match(albumScript, /audioBitsPerSecond: 128_000/);
+  assert.match(albumScript, /pixels >= 3840 \* 2160\) return 20_000_000/);
+  assert.match(albumScript, /pixels >= 1920 \* 1080\) return 12_000_000/);
+  assert.match(albumScript, /audioBitsPerSecond: 192_000/);
   assert.match(albumScript, /cameraGalleryButton\.addEventListener\("click"/);
   assert.match(albumStyles, /\.camera-panel[\s\S]*?position:\s*fixed[\s\S]*?height:\s*100dvh/);
   assert.match(albumScript, /maximumRecordingDuration = 30_000/);

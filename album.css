@@ -1437,6 +1437,45 @@ dialog::backdrop {
   font-size: 0.82rem;
 }
 
+.upload-progress {
+  margin-top: 0.9rem;
+  border: 1px solid rgba(0, 63, 152, 0.16);
+  border-radius: 12px;
+  padding: 0.9rem;
+  color: var(--royal-dark);
+  background: rgba(238, 242, 250, 0.72);
+}
+
+.upload-progress-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+
+.upload-progress-track {
+  display: block;
+  height: 7px;
+  margin: 0.65rem 0 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(0, 63, 152, 0.12);
+}
+
+.upload-progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--royal), #6d8fc7);
+  transition: width 180ms ease;
+}
+
+.upload-progress small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .consent-row {
   display: grid;
   grid-template-columns: auto 1fr;

@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ const root = resolve(__dirname);
 const assetsRoot = resolve(root, "assets");
 const port = Number(process.env.PORT || 3000);
 const maxJsonBodyBytes = 64 * 1024;
+const maxAlbumFileBytes = 100 * 1024 * 1024;
 const rateLimitStore = new Map();
 
 class HttpError extends Error {
@@ -32,12 +33,21 @@ const supabaseUrl = firstEnv("SUPABASE_URL");
 const supabaseSecretKey = firstEnv("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY");
 const mercadoPagoAccessToken = firstEnv("MERCADO_PAGO_ACCESS_TOKEN", "MP_ACCESS_TOKEN");
 const mercadoPagoWebhookSecret = firstEnv("MERCADO_PAGO_WEBHOOK_SECRET");
+const cloudinaryCloudName = firstEnv("CLOUDINARY_CLOUD_NAME");
+const cloudinaryApiKey = firstEnv("CLOUDINARY_API_KEY");
+const cloudinaryApiSecret = firstEnv("CLOUDINARY_API_SECRET");
 const siteUrl = firstEnv("SITE_URL", "FRONTEND_URL", "PUBLIC_FRONTEND_URL").replace(/\/+$/, "");
 const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL").replace(/\/+$/, "");
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseSecretKey);
 const hasMercadoPagoConfig = Boolean(mercadoPagoAccessToken && mercadoPagoWebhookSecret);
+const hasCloudinaryConfig = Boolean(cloudinaryCloudName && cloudinaryApiKey && cloudinaryApiSecret);
+const hasAlbumConfig = hasSupabaseConfig && hasCloudinaryConfig;
 const mercadoPagoMode = mercadoPagoAccessToken.startsWith("TEST-") ? "sandbox" : "production";
 const guestNotInvitedMessage = "Infelizmente, seu nome não está na lista de convidados.";
+const albumCategories = new Set(["Preparativos", "Cerimônia", "Jantar", "Festa"]);
+const albumImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+const albumVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
+const albumPublicIdPrefix = "gab-naia/album/";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -97,7 +107,7 @@ const securityHeaders = {
     "font-src https://fonts.gstatic.com",
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob: https:",
-    "connect-src 'self'",
+    "connect-src 'self' https://api.cloudinary.com",
     "object-src 'none'",
     "base-uri 'none'",
     "frame-ancestors 'none'",
@@ -312,6 +322,122 @@ function optionalEmail(value) {
   return email;
 }
 
+function requireAlbumCategory(value) {
+  const category = String(value ?? "").trim();
+  if (!albumCategories.has(category)) {
+    throw new HttpError(400, "Momento do álbum inválido.");
+  }
+  return category;
+}
+
+function requireAlbumFile(value) {
+  const fileName = requireText(value?.fileName, "Nome do arquivo", { min: 1, max: 180 });
+  const fileType = String(value?.fileType ?? "").trim().toLowerCase();
+  const fileSize = Number(value?.fileSize);
+  const resourceType = albumImageTypes.has(fileType)
+    ? "image"
+    : albumVideoTypes.has(fileType)
+      ? "video"
+      : "";
+
+  if (!resourceType) throw new HttpError(400, "Formato de arquivo não permitido.");
+  if (!Number.isSafeInteger(fileSize) || fileSize <= 0) {
+    throw new HttpError(400, "Tamanho de arquivo inválido.");
+  }
+  if (fileSize > maxAlbumFileBytes) {
+    throw new HttpError(413, "O arquivo ultrapassa o limite de 100 MB.");
+  }
+
+  return { fileName, fileType, fileSize, resourceType };
+}
+
+function createCloudinarySignature(parameters) {
+  const serialized = Object.entries(parameters)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(",") : value}`)
+    .join("&");
+  return createHash("sha1").update(`${serialized}${cloudinaryApiSecret}`).digest("hex");
+}
+
+function signaturesMatch(expected, received) {
+  if (!/^[a-f0-9]{40}$/i.test(String(received || ""))) return false;
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const receivedBuffer = Buffer.from(String(received), "hex");
+  return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+function requireCloudinaryUploadResult(body) {
+  const publicId = String(body.publicId ?? "").trim();
+  const version = Number(body.version);
+  const signature = String(body.signature ?? "").trim();
+  const resourceType = String(body.resourceType ?? "").trim();
+  const format = String(body.format ?? "").trim().toLowerCase();
+  const bytes = Number(body.bytes);
+  const width = body.width == null ? null : Number(body.width);
+  const height = body.height == null ? null : Number(body.height);
+  const duration = body.duration == null ? null : Number(body.duration);
+
+  if (!publicId.startsWith(albumPublicIdPrefix) || !/^[a-zA-Z0-9/_-]+$/.test(publicId)) {
+    throw new HttpError(400, "Identificador do arquivo inválido.");
+  }
+  if (!Number.isSafeInteger(version) || version <= 0) throw new HttpError(400, "Versão do arquivo inválida.");
+  if (!signaturesMatch(createCloudinarySignature({ public_id: publicId, version }), signature)) {
+    throw new HttpError(401, "Resposta do armazenamento não autenticada.");
+  }
+  if (!(["image", "video"].includes(resourceType))) throw new HttpError(400, "Tipo de mídia inválido.");
+  if (!/^[a-z0-9]{2,12}$/.test(format)) throw new HttpError(400, "Formato de mídia inválido.");
+  if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > maxAlbumFileBytes) {
+    throw new HttpError(400, "Tamanho de mídia inválido.");
+  }
+  if (width != null && (!Number.isSafeInteger(width) || width <= 0 || width > 32_000)) {
+    throw new HttpError(400, "Largura da mídia inválida.");
+  }
+  if (height != null && (!Number.isSafeInteger(height) || height <= 0 || height > 32_000)) {
+    throw new HttpError(400, "Altura da mídia inválida.");
+  }
+  if (duration != null && (!Number.isFinite(duration) || duration < 0 || duration > 3600)) {
+    throw new HttpError(400, "Duração da mídia inválida.");
+  }
+
+  return { publicId, version, resourceType, format, bytes, width, height, duration };
+}
+
+function buildCloudinaryUrl(media, transformation = "", outputFormat = media.format) {
+  const publicId = media.public_id
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  const transformPath = transformation ? `${transformation}/` : "";
+  return `https://res.cloudinary.com/${encodeURIComponent(cloudinaryCloudName)}/${media.resource_type}/upload/${transformPath}v${media.version}/${publicId}.${outputFormat}`;
+}
+
+function normalizeAlbumMedia(media) {
+  const isVideo = media.resource_type === "video";
+  return {
+    id: media.id,
+    guestName: media.guest_name,
+    category: media.category,
+    resourceType: media.resource_type,
+    mimeType: `${isVideo ? "video" : "image"}/${media.format === "jpg" ? "jpeg" : media.format}`,
+    bytes: Number(media.bytes),
+    width: media.width == null ? null : Number(media.width),
+    height: media.height == null ? null : Number(media.height),
+    duration: media.duration == null ? null : Number(media.duration),
+    originalUrl: buildCloudinaryUrl(media),
+    displayUrl: buildCloudinaryUrl(
+      media,
+      isVideo ? "f_auto,q_auto:best,vc_auto" : "f_auto,q_auto:best,c_limit,w_2400",
+    ),
+    thumbnailUrl: buildCloudinaryUrl(
+      media,
+      isVideo ? "so_0,f_jpg,q_auto:good,c_fill,g_auto,w_900,h_1200" : "f_auto,q_auto:good,c_fill,g_auto,w_900,h_1200",
+      isVideo ? "jpg" : media.format,
+    ),
+    createdAt: media.created_at,
+  };
+}
+
 function getSupabaseHeaders() {
   return {
     "apikey": supabaseSecretKey,
@@ -352,6 +478,28 @@ async function readSupabaseTable(path) {
 
   if (!supabaseResponse.ok) {
     const message = data?.message || data?.error_description || data?.hint || "Erro ao ler o Supabase.";
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+async function insertSupabaseTable(path, payload) {
+  const endpoint = new URL(`/rest/v1/${path}`, supabaseUrl);
+  const supabaseResponse = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Prefer": "return=representation",
+      ...getSupabaseHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const responseText = await supabaseResponse.text();
+  const data = responseText ? JSON.parse(responseText) : null;
+
+  if (!supabaseResponse.ok) {
+    const message = data?.message || data?.error_description || data?.hint || "Erro ao salvar no Supabase.";
     throw new Error(message);
   }
 
@@ -548,16 +696,83 @@ async function handleApi(request, response, pathname) {
       supabaseConfigured: hasSupabaseConfig,
       mercadoPagoConfigured: hasMercadoPagoConfig,
       mercadoPagoMode: hasMercadoPagoConfig ? mercadoPagoMode : "",
+      albumConfigured: hasAlbumConfig,
     });
     return true;
   }
 
-  if (!hasSupabaseConfig) {
-    sendJson(response, 503, { error: "Supabase não está configurado no servidor." });
-    return true;
-  }
-
   try {
+    if (request.method === "GET" && pathname === "/api/album/media") {
+      enforceRateLimit(request, "album-media", 120, 60_000);
+      if (!hasAlbumConfig) {
+        sendJson(response, 200, { configured: false, media: [], maxFileBytes: maxAlbumFileBytes });
+        return true;
+      }
+      const media = await readSupabaseTable(
+        "album_media?select=id,guest_name,category,public_id,resource_type,format,version,bytes,width,height,duration,created_at&order=created_at.desc&limit=200",
+      );
+      sendJson(response, 200, {
+        configured: true,
+        media: media.map(normalizeAlbumMedia),
+        maxFileBytes: maxAlbumFileBytes,
+      });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/album/upload-signature") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-signature", 30, 10 * 60_000);
+      if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
+      const body = await readJsonBody(request);
+      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 80 });
+      const category = requireAlbumCategory(body.category);
+      const file = requireAlbumFile(body);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const publicId = `${albumPublicIdPrefix}${randomUUID()}`;
+      const signature = createCloudinarySignature({ public_id: publicId, timestamp });
+      sendJson(response, 200, {
+        cloudName: cloudinaryCloudName,
+        apiKey: cloudinaryApiKey,
+        uploadUrl: `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudinaryCloudName)}/auto/upload`,
+        timestamp,
+        publicId,
+        signature,
+        maxFileBytes: maxAlbumFileBytes,
+        uploadContext: { guestName, category, resourceType: file.resourceType },
+      });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/album/media") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-register", 30, 10 * 60_000);
+      if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
+      const body = await readJsonBody(request);
+      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 80 });
+      const category = requireAlbumCategory(body.category);
+      const upload = requireCloudinaryUploadResult(body);
+      const inserted = await insertSupabaseTable("album_media", {
+        guest_name: guestName,
+        category,
+        public_id: upload.publicId,
+        resource_type: upload.resourceType,
+        format: upload.format,
+        version: upload.version,
+        bytes: upload.bytes,
+        width: upload.width,
+        height: upload.height,
+        duration: upload.duration,
+      });
+      if (!inserted?.[0]) throw new Error("O Supabase não retornou a memória salva.");
+      sendJson(response, 201, { media: normalizeAlbumMedia(inserted[0]) });
+      return true;
+    }
+
+    if (!hasSupabaseConfig) {
+      sendJson(response, 503, { error: "Supabase não está configurado no servidor." });
+      return true;
+    }
+
     if (request.method === "GET" && pathname === "/api/gifts") {
       enforceRateLimit(request, "gifts", 120, 60_000);
       const gifts = await getPublicGifts();

@@ -59,9 +59,9 @@
         </div>
       </section>
 
-      <aside class="prototype-notice" aria-label="Aviso sobre o protótipo">
-        <span>Protótipo navegável</span>
-        <p>Os arquivos enviados nesta tela ficam somente neste navegador e desaparecem ao atualizar a página.</p>
+      <aside class="prototype-notice" aria-label="Status do álbum" data-album-status>
+        <span data-album-status-label>Preparando álbum</span>
+        <p data-album-status-copy>Verificando o armazenamento das fotos e vídeos...</p>
       </aside>
 
       <section class="stories-section" aria-labelledby="stories-title">
@@ -249,11 +249,22 @@
           />
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14" /></svg>
           <strong>Escolher fotos e vídeos</strong>
-          <span>Até 10 arquivos · fotos de 15 MB · vídeos de 50 MB</span>
+          <span>Até 10 arquivos · fotos e vídeos de até 100 MB cada · originais preservados</span>
         </label>
 
         <div class="selected-files" data-selected-files aria-live="polite"></div>
         <p class="form-error" data-upload-error role="alert" hidden></p>
+
+        <div class="upload-progress" data-upload-progress hidden>
+          <div class="upload-progress-copy">
+            <strong data-upload-progress-label>Enviando memórias...</strong>
+            <span data-upload-progress-value>0%</span>
+          </div>
+          <span class="upload-progress-track" aria-hidden="true">
+            <span data-upload-progress-bar></span>
+          </span>
+          <small>Não feche esta tela até o envio terminar.</small>
+        </div>
 
         <label class="consent-row">
           <input name="consent" type="checkbox" required />
@@ -262,7 +273,7 @@
 
         <div class="dialog-actions">
           <button class="button secondary" type="button" data-close-upload>Cancelar</button>
-          <button class="button primary" type="submit">Publicar agora</button>
+          <button class="button primary" type="submit" data-upload-submit>Publicar agora</button>
         </div>
       </form>
     </dialog>

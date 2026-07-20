@@ -43,11 +43,20 @@ const cameraZoomInput = document.querySelector("[data-camera-zoom-input]");
 const cameraZoomValue = document.querySelector("[data-camera-zoom-value]");
 const cameraTorchButton = document.querySelector("[data-camera-torch]");
 const cameraModeButtons = document.querySelectorAll("[data-camera-mode]");
+const albumStatus = document.querySelector("[data-album-status]");
+const albumStatusLabel = document.querySelector("[data-album-status-label]");
+const albumStatusCopy = document.querySelector("[data-album-status-copy]");
+const uploadProgress = document.querySelector("[data-upload-progress]");
+const uploadProgressLabel = document.querySelector("[data-upload-progress-label]");
+const uploadProgressValue = document.querySelector("[data-upload-progress-value]");
+const uploadProgressBar = document.querySelector("[data-upload-progress-bar]");
+const uploadSubmitButton = document.querySelector("[data-upload-submit]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const activeObjectUrls = new Set();
 const capturedFiles = [];
+const maximumAlbumFileSize = 100 * 1024 * 1024;
 const storyGroups = new Map([
   ["Gabriel", {
     slides: [
@@ -88,6 +97,8 @@ let cameraImageCapture;
 let cameraPhotoSettings;
 let activeRecording;
 let torchEnabled = false;
+let albumStorageConfigured = false;
+let uploadInProgress = false;
 const maximumRecordingDuration = 30_000;
 const localCameraPreview = ["127.0.0.1", "localhost"].includes(location.hostname)
   && new URLSearchParams(location.search).has("camera-preview");
@@ -208,6 +219,33 @@ function showToast(message) {
   }, 4200);
 }
 
+function setUploadProgress(percent = 0, label = "Enviando memórias...") {
+  const normalized = Math.max(0, Math.min(100, Math.round(percent)));
+  uploadProgress.hidden = false;
+  uploadProgressLabel.textContent = label;
+  uploadProgressValue.textContent = `${normalized}%`;
+  uploadProgressBar.style.width = `${normalized}%`;
+}
+
+function resetUploadProgress() {
+  uploadProgress.hidden = true;
+  uploadProgressLabel.textContent = "Enviando memórias...";
+  uploadProgressValue.textContent = "0%";
+  uploadProgressBar.style.width = "0%";
+}
+
+function setUploadBusy(isBusy) {
+  uploadInProgress = isBusy;
+  uploadSubmitButton.disabled = isBusy;
+  uploadSubmitButton.textContent = isBusy ? "Enviando..." : "Publicar agora";
+  uploadForm.querySelectorAll("input, select, button").forEach((control) => {
+    if (control !== uploadSubmitButton) control.disabled = isBusy;
+  });
+  if (!isBusy && !window.MediaRecorder) {
+    document.querySelector('[data-camera-mode="video"]').disabled = true;
+  }
+}
+
 function validateFiles(files) {
   if (files.length === 0) return "Escolha pelo menos uma foto ou vídeo.";
   if (files.length > 10) return "Escolha no máximo 10 arquivos por envio.";
@@ -216,8 +254,7 @@ function validateFiles(files) {
     const isImage = allowedImageTypes.has(file.type);
     const isVideo = allowedVideoTypes.has(file.type);
     if (!isImage && !isVideo) return `O arquivo “${file.name}” não possui um formato permitido.`;
-    if (isImage && file.size > 15 * 1024 * 1024) return `A foto “${file.name}” ultrapassa 15 MB.`;
-    if (isVideo && file.size > 50 * 1024 * 1024) return `O vídeo “${file.name}” ultrapassa 50 MB.`;
+    if (file.size > maximumAlbumFileSize) return `O arquivo “${file.name}” ultrapassa 100 MB.`;
   }
 
   return "";
@@ -351,8 +388,8 @@ async function startCamera() {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: cameraFacingMode },
-        width: { ideal: photoMode ? 2560 : 1920 },
-        height: { ideal: photoMode ? 1440 : 1080 },
+        width: { ideal: photoMode ? 4096 : 3840 },
+        height: { ideal: photoMode ? 3072 : 2160 },
         frameRate: { ideal: 30 },
       },
       audio: false,
@@ -528,9 +565,9 @@ function getRecordingVideoBitrate() {
     ? cameraVideoTrack.getSettings()
     : {};
   const pixels = Number(settings.width || cameraVideo.videoWidth) * Number(settings.height || cameraVideo.videoHeight);
-  if (pixels >= 3840 * 2160) return 10_000_000;
-  if (pixels >= 1920 * 1080) return 8_000_000;
-  return 5_000_000;
+  if (pixels >= 3840 * 2160) return 20_000_000;
+  if (pixels >= 1920 * 1080) return 12_000_000;
+  return 8_000_000;
 }
 
 function updateRecordingClock(session) {
@@ -556,8 +593,8 @@ function finishVideoRecording(session) {
     showUploadError("A gravação ficou vazia. Tente novamente.");
     return;
   }
-  if (blob.size > 50 * 1024 * 1024) {
-    showUploadError("O vídeo ultrapassou 50 MB. Grave um trecho mais curto.");
+  if (blob.size > maximumAlbumFileSize) {
+    showUploadError("O vídeo ultrapassou 100 MB. Grave um trecho mais curto.");
     return;
   }
 
@@ -579,7 +616,7 @@ function startVideoRecording() {
     const mimeType = getSupportedRecordingMimeType();
     const recorderOptions = {
       videoBitsPerSecond: getRecordingVideoBitrate(),
-      audioBitsPerSecond: 128_000,
+      audioBitsPerSecond: 192_000,
     };
     if (mimeType) recorderOptions.mimeType = mimeType;
     const recorder = new MediaRecorder(cameraStream, recorderOptions);
@@ -643,7 +680,7 @@ async function captureCameraPhoto() {
       }
     }
 
-    if (blob && (!allowedImageTypes.has(blob.type) || blob.size > 15 * 1024 * 1024)) blob = undefined;
+    if (blob && !allowedImageTypes.has(blob.type)) blob = undefined;
 
     if (!blob) {
       cameraCanvas.width = cameraVideo.videoWidth;
@@ -710,6 +747,7 @@ function setActiveFilter(filter) {
 }
 
 function closeUploadDialog() {
+  if (uploadInProgress) return;
   stopCamera();
   setCameraMode("photo", false);
   if (!uploadDialog.open) return;
@@ -718,6 +756,7 @@ function closeUploadDialog() {
   capturedFiles.length = 0;
   selectedFiles.replaceChildren();
   showUploadError();
+  resetUploadProgress();
 }
 
 function openUploadDialog() {
@@ -895,7 +934,13 @@ function drawStoryExportChrome(context, person, caption, lightTheme = false) {
   context.globalAlpha = 1;
 }
 
-async function loadStoryImage(file) {
+async function loadStoryImage(source) {
+  const file = source instanceof Blob
+    ? source
+    : await fetch(source, { mode: "cors" }).then((response) => {
+      if (!response.ok) throw new Error("Não foi possível carregar a foto.");
+      return response.blob();
+    });
   if (typeof window.createImageBitmap === "function") {
     const bitmap = await window.createImageBitmap(file);
     return { image: bitmap, release: () => bitmap.close() };
@@ -933,7 +978,14 @@ function canvasToStoryFile(canvas, person) {
 }
 
 async function createStoryShareFile(slide, person) {
-  if (slide.kind === "media" && slide.type.startsWith("video/") && slide.file) return slide.file;
+  if (slide.kind === "media" && slide.type.startsWith("video/")) {
+    if (slide.file) return slide.file;
+    const response = await fetch(slide.originalUrl || slide.url, { mode: "cors" });
+    if (!response.ok) throw new Error("Não foi possível preparar o vídeo.");
+    const blob = await response.blob();
+    const extension = slide.type.includes("mp4") ? "mp4" : "webm";
+    return new File([blob], `story-${Date.now()}.${extension}`, { type: slide.type });
+  }
   if (document.fonts?.ready) await document.fonts.ready;
 
   const canvas = document.createElement("canvas");
@@ -942,10 +994,10 @@ async function createStoryShareFile(slide, person) {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas indisponível.");
 
-  if (slide.kind === "media" && slide.file) {
+  if (slide.kind === "media" && (slide.file || slide.url)) {
     let resource;
     try {
-      resource = await loadStoryImage(slide.file);
+      resource = await loadStoryImage(slide.file || slide.url);
       drawCoverImage(context, resource.image);
       drawStoryExportChrome(context, person, slide.caption, false);
     } catch {
@@ -1034,6 +1086,12 @@ function renderActiveStory() {
   storyShareButton.disabled = true;
   storyShareLabel.textContent = "Preparando story...";
   storyShareHint.textContent = "o mesmo conteúdo será enviado como foto ou vídeo";
+  if (slide.kind === "media" && slide.type.startsWith("video/") && !slide.file) {
+    storyShareButton.disabled = false;
+    storyShareLabel.textContent = "Compartilhar no Instagram";
+    storyShareHint.textContent = "o vídeo será preparado quando você tocar";
+    return;
+  }
   prepareStoryShareFile(slide, activeStoryPerson)
     .then(() => {
       const currentSlide = storyGroups.get(activeStoryPerson)?.slides[activeStoryIndex];
@@ -1078,37 +1136,57 @@ function openStory(person) {
   renderActiveStory();
 }
 
-function createMemoryCard(file, guestName, category) {
-  const objectUrl = URL.createObjectURL(file);
-  activeObjectUrls.add(objectUrl);
+function createMemoryCard({
+  file,
+  guestName,
+  category,
+  previewUrl,
+  displayUrl,
+  originalUrl,
+  type,
+  createdAt,
+  id,
+}) {
+  let localUrl = "";
+  if (file) {
+    localUrl = URL.createObjectURL(file);
+    activeObjectUrls.add(localUrl);
+  }
+  const resolvedType = type || file?.type || "image/jpeg";
+  const resolvedDisplayUrl = displayUrl || localUrl;
+  const resolvedPreviewUrl = previewUrl || resolvedDisplayUrl;
+  const resolvedOriginalUrl = originalUrl || resolvedDisplayUrl;
 
   const card = document.createElement("article");
   card.className = "memory-card";
   card.dataset.memoryCategory = category;
+  if (id) card.dataset.memoryId = id;
 
   const mediaButton = document.createElement("button");
   mediaButton.className = "memory-media-button";
   mediaButton.type = "button";
   mediaButton.setAttribute("aria-label", `Abrir memória compartilhada por ${guestName}`);
 
-  const isVideo = file.type.startsWith("video/");
-  const media = isVideo ? document.createElement("video") : document.createElement("img");
-  media.src = objectUrl;
-  if (isVideo) {
+  const isVideo = resolvedType.startsWith("video/");
+  const media = isVideo && !previewUrl ? document.createElement("video") : document.createElement("img");
+  media.src = resolvedPreviewUrl;
+  if (media instanceof HTMLVideoElement) {
     media.muted = true;
     media.playsInline = true;
     media.preload = "metadata";
+  } else {
+    media.alt = `Memória compartilhada por ${guestName}`;
+  }
+  mediaButton.append(media);
+  if (isVideo) {
     const badge = document.createElement("span");
     badge.className = "video-badge";
     badge.textContent = "▶ Vídeo";
-    mediaButton.append(media, badge);
-  } else {
-    media.alt = `Memória compartilhada por ${guestName}`;
-    mediaButton.append(media);
+    mediaButton.append(badge);
   }
 
   mediaButton.addEventListener("click", () => {
-    openLightbox({ url: objectUrl, type: file.type, guestName, category });
+    openLightbox({ url: resolvedDisplayUrl, type: resolvedType, guestName, category });
   });
 
   const caption = document.createElement("div");
@@ -1118,7 +1196,10 @@ function createMemoryCard(file, guestName, category) {
   const title = document.createElement("strong");
   title.textContent = isVideo ? "Vídeo compartilhado" : "Foto compartilhada";
   const author = document.createElement("small");
-  author.textContent = `Por ${guestName} · agora`;
+  const dateLabel = createdAt
+    ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(createdAt))
+    : "agora";
+  author.textContent = `Por ${guestName} · ${dateLabel}`;
   caption.append(categoryLabel, title, author);
 
   card.append(mediaButton, caption);
@@ -1126,11 +1207,153 @@ function createMemoryCard(file, guestName, category) {
     card,
     slide: {
       kind: "media",
-      url: objectUrl,
-      type: file.type,
+      url: resolvedDisplayUrl,
+      originalUrl: resolvedOriginalUrl,
+      type: resolvedType,
       file,
       caption: `${category} · compartilhado por ${guestName}`,
     },
+  };
+}
+
+function addMemoriesToGallery(entries, { prepend = true } = {}) {
+  if (!entries.length) return;
+  memoryGrid.querySelectorAll("[data-demo-memory]").forEach((card) => card.remove());
+  const fragment = document.createDocumentFragment();
+  const groupedSlides = new Map();
+
+  entries.forEach((entry) => {
+    const memory = createMemoryCard(entry);
+    fragment.append(memory.card);
+    const slides = groupedSlides.get(entry.guestName) || [];
+    slides.push(memory.slide);
+    groupedSlides.set(entry.guestName, slides);
+  });
+  if (prepend) memoryGrid.prepend(fragment);
+  else memoryGrid.append(fragment);
+
+  groupedSlides.forEach((slides, guestName) => {
+    const existingStoryGroup = storyGroups.get(guestName);
+    if (existingStoryGroup) existingStoryGroup.slides.push(...slides);
+    else storyGroups.set(guestName, { slides });
+  });
+  renderStories();
+  setActiveFilter("Todos");
+}
+
+async function requestAlbumJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Não foi possível acessar o álbum.");
+  return payload;
+}
+
+function showLocalAlbumStatus(message = "O armazenamento online ainda não foi conectado. Os envios desta tela ficam somente neste navegador.") {
+  albumStorageConfigured = false;
+  albumStatusLabel.textContent = "Modo de demonstração";
+  albumStatusCopy.textContent = message;
+}
+
+async function initializeAlbumStorage() {
+  try {
+    const payload = await requestAlbumJson("/api/album/media");
+    if (!payload.configured) {
+      showLocalAlbumStatus();
+      return;
+    }
+
+    albumStorageConfigured = true;
+    albumStatusLabel.textContent = "Originais preservados";
+    albumStatusCopy.textContent = "Fotos e vídeos ficam salvos no álbum e aparecem para todos os convidados.";
+    albumStatus.classList.add("is-online");
+    memoryGrid.querySelectorAll("[data-demo-memory]").forEach((card) => card.remove());
+    const entries = payload.media.map((media) => ({
+      id: media.id,
+      guestName: media.guestName,
+      category: media.category,
+      previewUrl: media.thumbnailUrl,
+      displayUrl: media.displayUrl,
+      originalUrl: media.originalUrl,
+      type: media.mimeType,
+      createdAt: media.createdAt,
+    }));
+    addMemoriesToGallery(entries, { prepend: false });
+    updateGalleryVisibility();
+  } catch {
+    showLocalAlbumStatus("A conexão com o armazenamento não terminou. Você pode testar a interface, mas o envio ainda ficará neste navegador.");
+  }
+}
+
+function uploadFileToCloudinary(file, upload, onProgress) {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("api_key", upload.apiKey);
+    formData.append("timestamp", String(upload.timestamp));
+    formData.append("public_id", upload.publicId);
+    formData.append("signature", upload.signature);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", upload.uploadUrl);
+    xhr.responseType = "json";
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    });
+    xhr.addEventListener("load", () => {
+      const payload = xhr.response || {};
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(1);
+        resolve(payload);
+        return;
+      }
+      reject(new Error(payload.error?.message || "O armazenamento recusou o arquivo."));
+    });
+    xhr.addEventListener("error", () => reject(new Error("A conexão caiu durante o envio.")));
+    xhr.addEventListener("abort", () => reject(new Error("O envio foi cancelado.")));
+    xhr.send(formData);
+  });
+}
+
+async function persistAlbumFile(file, guestName, category, onProgress) {
+  const upload = await requestAlbumJson("/api/album/upload-signature", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      guestName,
+      category,
+      fileName: file.name,
+      fileType: file.type,
+      fileSize: file.size,
+    }),
+  });
+  const stored = await uploadFileToCloudinary(file, upload, onProgress);
+  const registered = await requestAlbumJson("/api/album/media", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      guestName,
+      category,
+      publicId: stored.public_id,
+      resourceType: stored.resource_type,
+      format: stored.format,
+      version: stored.version,
+      bytes: stored.bytes,
+      width: stored.width,
+      height: stored.height,
+      duration: stored.duration,
+      signature: stored.signature,
+    }),
+  });
+  return {
+    id: registered.media.id,
+    guestName: registered.media.guestName,
+    category: registered.media.category,
+    previewUrl: registered.media.thumbnailUrl,
+    displayUrl: registered.media.displayUrl,
+    originalUrl: registered.media.originalUrl,
+    type: registered.media.mimeType,
+    createdAt: registered.media.createdAt,
+    file,
   };
 }
 
@@ -1204,8 +1427,9 @@ cameraModeButtons.forEach((button) => {
   });
 });
 
-uploadForm.addEventListener("submit", (event) => {
+uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (uploadInProgress) return;
   const files = getPendingFiles();
   const error = validateFiles(files);
   if (error) {
@@ -1221,27 +1445,39 @@ uploadForm.addEventListener("submit", (event) => {
     return;
   }
 
-  const fragment = document.createDocumentFragment();
-  const newStorySlides = [];
-  files.forEach((file) => {
-    const memory = createMemoryCard(file, guestName, category);
-    fragment.append(memory.card);
-    newStorySlides.push(memory.slide);
-  });
-  memoryGrid.prepend(fragment);
-  const existingStoryGroup = storyGroups.get(guestName);
-  if (existingStoryGroup) {
-    existingStoryGroup.slides.push(...newStorySlides);
+  let entries;
+  if (albumStorageConfigured) {
+    entries = [];
+    setUploadBusy(true);
+    setUploadProgress(0, `Enviando 1 de ${files.length}...`);
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const entry = await persistAlbumFile(file, guestName, category, (fileProgress) => {
+          const overallProgress = ((index + fileProgress) / files.length) * 100;
+          setUploadProgress(overallProgress, `Enviando ${index + 1} de ${files.length}...`);
+        });
+        entries.push(entry);
+      }
+      setUploadProgress(100, "Memórias salvas com qualidade original");
+    } catch (uploadFailure) {
+      if (entries.length) addMemoriesToGallery(entries);
+      showUploadError(uploadFailure.message || "Não foi possível concluir o envio.");
+      setUploadBusy(false);
+      return;
+    }
+    setUploadBusy(false);
   } else {
-    storyGroups.set(guestName, { slides: newStorySlides });
+    entries = files.map((file) => ({ file, guestName, category, type: file.type }));
   }
-  renderStories();
-  setActiveFilter("Todos");
+
+  addMemoriesToGallery(entries);
   closeUploadDialog();
   document.querySelector("#galeria").scrollIntoView({ behavior: "smooth", block: "start" });
+  const persistentMessage = albumStorageConfigured ? " e foi salva com o original preservado" : " neste navegador";
   showToast(files.length === 1
-    ? "Memória publicada! Ela já aparece na galeria coletiva."
-    : `${files.length} memórias publicadas! Elas já aparecem para todos.`);
+    ? `Memória publicada${persistentMessage}!`
+    : `${files.length} memórias publicadas${persistentMessage}!`);
 });
 
 uploadDialog.addEventListener("click", (event) => {
@@ -1279,3 +1515,4 @@ window.addEventListener("beforeunload", () => {
 renderStories();
 updateGalleryVisibility();
 scheduleHeroRotation();
+initializeAlbumStorage();
