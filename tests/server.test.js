@@ -113,13 +113,13 @@ test("rejeita origem externa, entrada inválida e corpo excessivo", async () => 
   assert.equal(oversized.status, 413);
 });
 
-test("data exibida e data do casamento usam 2026", async () => {
+test("data exibida e contagem até meia-noite do casamento usam 2026", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   const script = await readFile(new URL("../script.js", import.meta.url), "utf8");
 
   assert.match(html, /28 nov 2026/);
   assert.doesNotMatch(html, /28 nov 2025/);
-  assert.match(script, /2026-11-28T11:30:00-03:00/);
+  assert.match(script, /2026-11-28T00:00:00-03:00/);
 });
 
 test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", async () => {
