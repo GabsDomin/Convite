@@ -242,8 +242,14 @@ test("protótipo mobile do álbum publica memórias, usa câmera e agrupa storie
   assert.match(albumScript, /maximumRecordingDuration = 30_000/);
   assert.match(albumScript, /audio:[\s\S]*?echoCancellation: true/);
   assert.match(album, /data-share-story[\s\S]*?Compartilhar no Instagram/i);
-  assert.match(albumScript, /navigator\.canShare\?\.\(\{ files: \[slide\.file\] \}\)/);
-  assert.match(albumScript, /await navigator\.share\(\{ files: \[slide\.file\] \}\)/);
+  assert.match(albumScript, /storyExportWidth = 1080/);
+  assert.match(albumScript, /storyExportHeight = 1920/);
+  assert.match(albumScript, /canvas\.toBlob\(\(blob\)/);
+  assert.match(albumScript, /prepareStoryShareFile\(slide, activeStoryPerson\)/);
+  assert.match(albumScript, /navigator\.canShare\?\.\(\{ files: \[shareFile\] \}\)/);
+  assert.match(albumScript, /await navigator\.share\(\{ files: \[shareFile\] \}\)/);
+  assert.doesNotMatch(albumScript, /url:\s*`\$\{location\.origin\}\/album`/);
+  assert.doesNotMatch(albumScript, /Compartilhar este álbum|Link do álbum copiado/i);
   assert.match(albumScript, /file,[\s\S]*?caption:/);
   assert.match(server, /"Permissions-Policy": "camera=\(self\), microphone=\(self\), web-share=\(self\), geolocation=\(\)"/);
   assert.doesNotMatch(album, /on(?:click|change|submit)\s*=/i);

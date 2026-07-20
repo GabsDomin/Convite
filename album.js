@@ -624,6 +624,207 @@ function showPreviousStory() {
   renderActiveStory();
 }
 
+const storyExportWidth = 1080;
+const storyExportHeight = 1920;
+
+function getWrappedCanvasLines(context, text, maxWidth, maxLines = 4) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let currentLine = "";
+
+  words.forEach((word) => {
+    const candidate = currentLine ? `${currentLine} ${word}` : word;
+    if (context.measureText(candidate).width <= maxWidth || !currentLine) {
+      currentLine = candidate;
+      return;
+    }
+    lines.push(currentLine);
+    currentLine = word;
+  });
+  if (currentLine) lines.push(currentLine);
+
+  if (lines.length > maxLines) {
+    const visibleLines = lines.slice(0, maxLines);
+    visibleLines[maxLines - 1] = `${visibleLines[maxLines - 1].replace(/[.…]+$/, "")}…`;
+    return visibleLines;
+  }
+  return lines;
+}
+
+function drawCenteredCanvasText(context, text, centerY, maxWidth, lineHeight, maxLines = 4) {
+  const lines = getWrappedCanvasLines(context, text, maxWidth, maxLines);
+  const firstLineY = centerY - ((lines.length - 1) * lineHeight) / 2;
+  lines.forEach((line, index) => context.fillText(line, storyExportWidth / 2, firstLineY + index * lineHeight));
+}
+
+function paintStoryTheme(context, theme) {
+  const lightTheme = theme === "story-theme-light";
+  const gradient = context.createLinearGradient(0, 0, storyExportWidth, storyExportHeight);
+  if (lightTheme) {
+    gradient.addColorStop(0, "#fffdfb");
+    gradient.addColorStop(1, "#dfe7f5");
+  } else if (theme === "story-theme-night") {
+    gradient.addColorStop(0, "#102954");
+    gradient.addColorStop(0.68, "#00152f");
+    gradient.addColorStop(1, "#000b1d");
+  } else {
+    gradient.addColorStop(0, "#7090c8");
+    gradient.addColorStop(0.62, "#003f98");
+    gradient.addColorStop(1, "#001f4d");
+  }
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, storyExportWidth, storyExportHeight);
+
+  const highlight = context.createRadialGradient(260, 330, 0, 260, 330, 460);
+  highlight.addColorStop(0, lightTheme ? "rgba(143,161,205,0.34)" : "rgba(255,255,255,0.25)");
+  highlight.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = highlight;
+  context.fillRect(0, 0, storyExportWidth, storyExportHeight);
+}
+
+function drawCoverImage(context, image) {
+  const imageWidth = image.width || image.naturalWidth;
+  const imageHeight = image.height || image.naturalHeight;
+  const scale = Math.max(storyExportWidth / imageWidth, storyExportHeight / imageHeight);
+  const width = imageWidth * scale;
+  const height = imageHeight * scale;
+  context.drawImage(image, (storyExportWidth - width) / 2, (storyExportHeight - height) / 2, width, height);
+}
+
+function drawStoryExportChrome(context, person, caption, lightTheme = false) {
+  const topGradient = context.createLinearGradient(0, 0, 0, 360);
+  topGradient.addColorStop(0, lightTheme ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.52)");
+  topGradient.addColorStop(1, "rgba(0,0,0,0)");
+  context.fillStyle = topGradient;
+  context.fillRect(0, 0, storyExportWidth, 360);
+
+  const bottomGradient = context.createLinearGradient(0, 1450, 0, storyExportHeight);
+  bottomGradient.addColorStop(0, "rgba(0,0,0,0)");
+  bottomGradient.addColorStop(1, lightTheme ? "rgba(255,255,255,0.82)" : "rgba(0,0,0,0.72)");
+  context.fillStyle = bottomGradient;
+  context.fillRect(0, 1450, storyExportWidth, 470);
+
+  const foreground = lightTheme ? "#002f73" : "#ffffff";
+  context.fillStyle = lightTheme ? "#003f98" : "rgba(255,255,255,0.96)";
+  context.beginPath();
+  context.arc(100, 115, 48, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "#ffffff";
+  context.font = '700 32px "Cormorant Garamond", Georgia, serif';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(getInitials(person), 100, 118);
+
+  context.fillStyle = foreground;
+  context.textAlign = "left";
+  context.font = '800 34px Inter, Arial, sans-serif';
+  context.fillText(person, 170, 104);
+  context.globalAlpha = 0.72;
+  context.font = '600 22px Inter, Arial, sans-serif';
+  context.fillText("Compartilhado no álbum", 170, 142);
+  context.globalAlpha = 1;
+
+  context.fillStyle = foreground;
+  context.textAlign = "center";
+  context.font = '700 30px Inter, Arial, sans-serif';
+  drawCenteredCanvasText(context, caption || "Memória compartilhada no álbum", 1720, 850, 40, 3);
+  context.globalAlpha = 0.78;
+  context.font = '700 22px Inter, Arial, sans-serif';
+  context.fillText("GABRIEL & HALANAIA  ·  28.11.2026", storyExportWidth / 2, 1840);
+  context.globalAlpha = 1;
+}
+
+async function loadStoryImage(file) {
+  if (typeof window.createImageBitmap === "function") {
+    const bitmap = await window.createImageBitmap(file);
+    return { image: bitmap, release: () => bitmap.close() };
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.src = objectUrl;
+  try {
+    await new Promise((resolve, reject) => {
+      image.addEventListener("load", resolve, { once: true });
+      image.addEventListener("error", reject, { once: true });
+    });
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+  return { image, release: () => URL.revokeObjectURL(objectUrl) };
+}
+
+function canvasToStoryFile(canvas, person) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Não foi possível criar a imagem do story."));
+        return;
+      }
+      const safeName = person.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-");
+      resolve(new File([blob], `story-${safeName || "convidado"}.jpg`, {
+        type: "image/jpeg",
+        lastModified: Date.now(),
+      }));
+    }, "image/jpeg", 0.92);
+  });
+}
+
+async function createStoryShareFile(slide, person) {
+  if (slide.kind === "media" && slide.type.startsWith("video/") && slide.file) return slide.file;
+  if (document.fonts?.ready) await document.fonts.ready;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = storyExportWidth;
+  canvas.height = storyExportHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas indisponível.");
+
+  if (slide.kind === "media" && slide.file) {
+    let resource;
+    try {
+      resource = await loadStoryImage(slide.file);
+      drawCoverImage(context, resource.image);
+      drawStoryExportChrome(context, person, slide.caption, false);
+    } catch {
+      return slide.file;
+    } finally {
+      resource?.release();
+    }
+  } else {
+    const lightTheme = slide.theme === "story-theme-light";
+    paintStoryTheme(context, slide.theme);
+    context.fillStyle = lightTheme ? "#002f73" : "#ffffff";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.font = '600 118px "Cormorant Garamond", Georgia, serif';
+    drawCenteredCanvasText(context, slide.title, 920, 850, 112, 4);
+    context.globalAlpha = 0.82;
+    context.font = '800 28px Inter, Arial, sans-serif';
+    drawCenteredCanvasText(context, String(slide.caption || "").toUpperCase(), 1120, 820, 42, 3);
+    context.globalAlpha = 1;
+    drawStoryExportChrome(context, person, slide.caption, lightTheme);
+  }
+
+  return canvasToStoryFile(canvas, person);
+}
+
+function prepareStoryShareFile(slide, person) {
+  if (slide.shareFile) return Promise.resolve(slide.shareFile);
+  if (slide.shareFilePromise) return slide.shareFilePromise;
+  slide.shareFilePromise = createStoryShareFile(slide, person)
+    .then((file) => {
+      slide.shareFile = file;
+      return file;
+    })
+    .catch((error) => {
+      slide.shareFilePromise = undefined;
+      throw error;
+    });
+  return slide.shareFilePromise;
+}
+
 function renderActiveStory() {
   clearStoryTimer();
   const group = storyGroups.get(activeStoryPerson);
@@ -669,11 +870,23 @@ function renderActiveStory() {
   }
 
   storyCaption.textContent = slide.caption || "Memória compartilhada no álbum";
-  const canShareMedia = slide.kind === "media" && Boolean(slide.file);
-  storyShareLabel.textContent = canShareMedia ? "Compartilhar no Instagram" : "Compartilhar este álbum";
-  storyShareHint.textContent = canShareMedia
-    ? "no celular, escolha Instagram → Stories"
-    : "envie o link para quem também viveu esse momento";
+  storyShareButton.disabled = true;
+  storyShareLabel.textContent = "Preparando story...";
+  storyShareHint.textContent = "o mesmo conteúdo será enviado como foto ou vídeo";
+  prepareStoryShareFile(slide, activeStoryPerson)
+    .then(() => {
+      const currentSlide = storyGroups.get(activeStoryPerson)?.slides[activeStoryIndex];
+      if (currentSlide !== slide) return;
+      storyShareButton.disabled = false;
+      storyShareLabel.textContent = "Compartilhar no Instagram";
+      storyShareHint.textContent = "no celular, escolha Instagram → Stories";
+    })
+    .catch(() => {
+      const currentSlide = storyGroups.get(activeStoryPerson)?.slides[activeStoryIndex];
+      if (currentSlide !== slide) return;
+      storyShareLabel.textContent = "Story indisponível para compartilhar";
+      storyShareHint.textContent = "tente novamente em outro navegador";
+    });
 }
 
 async function shareActiveStory() {
@@ -683,23 +896,13 @@ async function shareActiveStory() {
   if (!slide) return;
 
   try {
-    if (slide.kind === "media" && slide.file && navigator.canShare?.({ files: [slide.file] })) {
-      await navigator.share({ files: [slide.file] });
-      showToast("Foto enviada ao menu de compartilhamento do celular.");
+    const shareFile = slide.shareFile || await prepareStoryShareFile(slide, activeStoryPerson);
+    if (!navigator.canShare?.({ files: [shareFile] })) {
+      showToast("Este navegador não permite compartilhar o story como arquivo.");
       return;
     }
-
-    if (navigator.share) {
-      await navigator.share({
-        title: "Memórias de Gabriel & Halanaia",
-        text: "Veja e compartilhe as memórias do nosso dia.",
-        url: `${location.origin}/album`,
-      });
-      return;
-    }
-
-    await navigator.clipboard.writeText(`${location.origin}/album`);
-    showToast("Link do álbum copiado! Abra o Instagram para compartilhar.");
+    await navigator.share({ files: [shareFile] });
+    showToast("Story enviado ao compartilhamento. Agora escolha Instagram → Stories.");
   } catch (error) {
     if (error?.name === "AbortError") return;
     showToast("Não foi possível abrir o compartilhamento neste navegador.");

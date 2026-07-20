@@ -1470,6 +1470,11 @@ dialog::backdrop {
   transform: scale(0.97);
 }
 
+.story-share-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .story-share-icon {
   display: grid;
   place-items: center;
