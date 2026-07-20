@@ -46,7 +46,7 @@ before(async () => {
       ...process.env,
       PORT: String(port),
       SUPABASE_URL: "https://example.supabase.co",
-      SUPABASE_SERVICE_ROLE_KEY: "service-role-test-secret",
+      SUPABASE_SECRET_KEY: "sb_secret_test_secret",
       MERCADO_PAGO_ACCESS_TOKEN: "TEST-token-sem-webhook",
       MERCADO_PAGO_WEBHOOK_SECRET: "",
     },
@@ -87,7 +87,7 @@ test("configuração pública não contém segredos", async () => {
     mercadoPagoConfigured: false,
     mercadoPagoMode: "",
   });
-  assert.equal(JSON.stringify(payload).includes("service-role-test-secret"), false);
+  assert.equal(JSON.stringify(payload).includes("sb_secret_test_secret"), false);
 });
 
 test("rejeita origem externa, entrada inválida e corpo excessivo", async () => {

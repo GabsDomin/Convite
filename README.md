@@ -17,7 +17,7 @@ Cadastre em `Production`:
 
 ```env
 SUPABASE_URL=https://lyuqvwrikfajmcodwous.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_SECRET_KEY=sb_secret_...
 MERCADO_PAGO_ACCESS_TOKEN=...
 MERCADO_PAGO_WEBHOOK_SECRET=...
 SITE_URL=https://gab-naia.online
@@ -25,7 +25,7 @@ SITE_URL=https://gab-naia.online
 
 `BACKEND_URL` é opcional. Ele só é necessário se a API ficar em outro domínio; nesse projeto, deixe sem cadastrar porque o backend usa o mesmo `SITE_URL`.
 
-Segredos como `SUPABASE_SERVICE_ROLE_KEY`, `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_WEBHOOK_SECRET` ficam somente no servidor. Nunca use prefixos públicos como `NEXT_PUBLIC_`, `VITE_` ou `PUBLIC_` nessas variáveis.
+Segredos como `SUPABASE_SECRET_KEY`, `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_WEBHOOK_SECRET` ficam somente no servidor. Nunca use prefixos públicos como `NEXT_PUBLIC_`, `VITE_` ou `PUBLIC_` nessas variáveis. A variável antiga `SUPABASE_SERVICE_ROLE_KEY` continua aceita apenas para compatibilidade.
 
 ## Banco de dados
 

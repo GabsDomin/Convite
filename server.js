@@ -29,12 +29,12 @@ function firstEnv(...names) {
 }
 
 const supabaseUrl = firstEnv("SUPABASE_URL");
-const supabaseServiceRoleKey = firstEnv("SUPABASE_SERVICE_ROLE_KEY");
+const supabaseSecretKey = firstEnv("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY");
 const mercadoPagoAccessToken = firstEnv("MERCADO_PAGO_ACCESS_TOKEN", "MP_ACCESS_TOKEN");
 const mercadoPagoWebhookSecret = firstEnv("MERCADO_PAGO_WEBHOOK_SECRET");
 const siteUrl = firstEnv("SITE_URL", "FRONTEND_URL", "PUBLIC_FRONTEND_URL").replace(/\/+$/, "");
 const backendUrl = firstEnv("BACKEND_URL", "PUBLIC_BACKEND_URL", "SITE_URL").replace(/\/+$/, "");
-const hasSupabaseConfig = Boolean(supabaseUrl && supabaseServiceRoleKey);
+const hasSupabaseConfig = Boolean(supabaseUrl && supabaseSecretKey);
 const hasMercadoPagoConfig = Boolean(mercadoPagoAccessToken && mercadoPagoWebhookSecret);
 const mercadoPagoMode = mercadoPagoAccessToken.startsWith("TEST-") ? "sandbox" : "production";
 
@@ -238,14 +238,22 @@ function optionalEmail(value) {
   return email;
 }
 
+function getSupabaseHeaders() {
+  return {
+    "apikey": supabaseSecretKey,
+    ...(!supabaseSecretKey.startsWith("sb_secret_")
+      ? { "Authorization": `Bearer ${supabaseSecretKey}` }
+      : {}),
+  };
+}
+
 async function callSupabaseRpc(functionName, payload = {}) {
   const endpoint = new URL(`/rest/v1/rpc/${functionName}`, supabaseUrl);
   const supabaseResponse = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "apikey": supabaseServiceRoleKey,
-      "Authorization": `Bearer ${supabaseServiceRoleKey}`,
+      ...getSupabaseHeaders(),
     },
     body: JSON.stringify(payload),
   });
@@ -263,10 +271,7 @@ async function callSupabaseRpc(functionName, payload = {}) {
 async function readSupabaseTable(path) {
   const endpoint = new URL(`/rest/v1/${path}`, supabaseUrl);
   const supabaseResponse = await fetch(endpoint, {
-    headers: {
-      "apikey": supabaseServiceRoleKey,
-      "Authorization": `Bearer ${supabaseServiceRoleKey}`,
-    },
+    headers: getSupabaseHeaders(),
   });
   const responseText = await supabaseResponse.text();
   const data = responseText ? JSON.parse(responseText) : null;
