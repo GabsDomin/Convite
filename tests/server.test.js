@@ -122,6 +122,17 @@ test("data exibida e contagem até meia-noite do casamento usam 2026", async () 
   assert.match(script, /2026-11-28T00:00:00-03:00/);
 });
 
+test("local da celebração mostra o endereço e abre o Google Maps com segurança", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+
+  assert.match(html, /Rua José Marques Ribeiro, 521/);
+  assert.match(html, /Guaturinho · Cajamar\/SP · CEP 07750-000/);
+  assert.match(html, /href="https:\/\/maps\.app\.goo\.gl\/rGEtAHSXq4ArMM4o7"/);
+  assert.match(html, /target="_blank"/);
+  assert.match(html, /rel="noopener noreferrer"/);
+  assert.doesNotMatch(html, /Espaço a definir/);
+});
+
 test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", async () => {
   const config = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
   assert.equal(config.functions?.["server.ts"]?.includeFiles, "**/*");
