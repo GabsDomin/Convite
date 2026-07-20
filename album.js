@@ -84,6 +84,8 @@ let cameraStream;
 let cameraFacingMode = "environment";
 let cameraMode = "photo";
 let cameraVideoTrack;
+let cameraImageCapture;
+let cameraPhotoSettings;
 let activeRecording;
 let torchEnabled = false;
 const maximumRecordingDuration = 30_000;
@@ -270,6 +272,8 @@ function stopActiveRecording(shouldSave = true) {
 
 function resetCameraCapabilities() {
   cameraVideoTrack = undefined;
+  cameraImageCapture = undefined;
+  cameraPhotoSettings = undefined;
   torchEnabled = false;
   cameraTools.hidden = true;
   cameraZoom.hidden = true;
@@ -343,11 +347,13 @@ async function startCamera() {
   }
 
   try {
+    const photoMode = cameraMode === "photo";
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: cameraFacingMode },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: photoMode ? 2560 : 1920 },
+        height: { ideal: photoMode ? 1440 : 1080 },
+        frameRate: { ideal: 30 },
       },
       audio: false,
     });
@@ -369,7 +375,7 @@ async function startCamera() {
 
     cameraVideo.srcObject = cameraStream;
     await cameraVideo.play();
-    configureCameraCapabilities();
+    await configureCameraCapabilities();
     cameraStatus.hidden = true;
   } catch (error) {
     const message = getCameraErrorMessage(error);
@@ -378,7 +384,38 @@ async function startCamera() {
   }
 }
 
-function configureCameraCapabilities() {
+function getPreferredCapabilityValue(capability, preferredValue) {
+  if (!Array.isArray(capability)) return undefined;
+  return capability.includes(preferredValue) ? preferredValue : undefined;
+}
+
+async function configureNativePhotoCapture() {
+  if (cameraMode !== "photo" || typeof window.ImageCapture !== "function" || !cameraVideoTrack) return;
+
+  try {
+    cameraImageCapture = new ImageCapture(cameraVideoTrack);
+  } catch {
+    cameraImageCapture = undefined;
+    return;
+  }
+
+  if (typeof cameraImageCapture.getPhotoCapabilities !== "function") return;
+  try {
+    const photoCapabilities = await cameraImageCapture.getPhotoCapabilities();
+    const imageWidth = photoCapabilities.imageWidth;
+    const imageHeight = photoCapabilities.imageHeight;
+    cameraPhotoSettings = {};
+
+    if (Number.isFinite(imageWidth?.max)) cameraPhotoSettings.imageWidth = Math.min(imageWidth.max, 4096);
+    if (Number.isFinite(imageHeight?.max)) cameraPhotoSettings.imageHeight = Math.min(imageHeight.max, 4096);
+    if (photoCapabilities.fillLightMode?.includes("auto")) cameraPhotoSettings.fillLightMode = "auto";
+    if (Object.keys(cameraPhotoSettings).length === 0) cameraPhotoSettings = undefined;
+  } catch {
+    cameraPhotoSettings = undefined;
+  }
+}
+
+async function configureCameraCapabilities() {
   cameraVideoTrack = cameraStream?.getVideoTracks()[0];
   if (!cameraVideoTrack) return;
 
@@ -388,6 +425,28 @@ function configureCameraCapabilities() {
   const settings = typeof cameraVideoTrack.getSettings === "function"
     ? cameraVideoTrack.getSettings()
     : {};
+
+  if ("contentHint" in cameraVideoTrack) {
+    cameraVideoTrack.contentHint = cameraMode === "photo" ? "detail" : "motion";
+  }
+
+  const advancedQualityConstraints = {};
+  const focusMode = getPreferredCapabilityValue(capabilities.focusMode, "continuous");
+  const exposureMode = getPreferredCapabilityValue(capabilities.exposureMode, "continuous");
+  const whiteBalanceMode = getPreferredCapabilityValue(capabilities.whiteBalanceMode, "continuous");
+  if (focusMode) advancedQualityConstraints.focusMode = focusMode;
+  if (exposureMode) advancedQualityConstraints.exposureMode = exposureMode;
+  if (whiteBalanceMode) advancedQualityConstraints.whiteBalanceMode = whiteBalanceMode;
+  if (Object.keys(advancedQualityConstraints).length > 0) {
+    try {
+      await cameraVideoTrack.applyConstraints({ advanced: [advancedQualityConstraints] });
+    } catch {
+      // The requested quality controls are optional and vary between devices.
+    }
+  }
+
+  await configureNativePhotoCapture();
+
   const zoom = capabilities.zoom;
   const supportsZoom = zoom
     && Number.isFinite(zoom.min)
@@ -464,6 +523,16 @@ function getSupportedRecordingMimeType() {
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
 }
 
+function getRecordingVideoBitrate() {
+  const settings = typeof cameraVideoTrack?.getSettings === "function"
+    ? cameraVideoTrack.getSettings()
+    : {};
+  const pixels = Number(settings.width || cameraVideo.videoWidth) * Number(settings.height || cameraVideo.videoHeight);
+  if (pixels >= 3840 * 2160) return 10_000_000;
+  if (pixels >= 1920 * 1080) return 8_000_000;
+  return 5_000_000;
+}
+
 function updateRecordingClock(session) {
   const elapsedSeconds = Math.min(
     Math.floor((Date.now() - session.startedAt) / 1000),
@@ -508,9 +577,12 @@ function startVideoRecording() {
   if (!cameraStream || activeRecording) return;
   try {
     const mimeType = getSupportedRecordingMimeType();
-    const recorder = mimeType
-      ? new MediaRecorder(cameraStream, { mimeType, videoBitsPerSecond: 4_000_000 })
-      : new MediaRecorder(cameraStream);
+    const recorderOptions = {
+      videoBitsPerSecond: getRecordingVideoBitrate(),
+      audioBitsPerSecond: 128_000,
+    };
+    if (mimeType) recorderOptions.mimeType = mimeType;
+    const recorder = new MediaRecorder(cameraStream, recorderOptions);
     const session = {
       recorder,
       chunks: [],
@@ -556,17 +628,44 @@ async function captureCameraPhoto() {
   cameraCaptureButton.disabled = true;
   showUploadError();
   try {
-    cameraCanvas.width = cameraVideo.videoWidth;
-    cameraCanvas.height = cameraVideo.videoHeight;
-    const context = cameraCanvas.getContext("2d");
-    if (!context) throw new Error("Canvas indisponível");
-    context.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
-    const blob = await new Promise((resolve) => cameraCanvas.toBlob(resolve, "image/jpeg", 0.92));
+    let blob;
+    if (cameraImageCapture) {
+      try {
+        blob = cameraPhotoSettings
+          ? await cameraImageCapture.takePhoto(cameraPhotoSettings)
+          : await cameraImageCapture.takePhoto();
+      } catch {
+        try {
+          blob = await cameraImageCapture.takePhoto();
+        } catch {
+          blob = undefined;
+        }
+      }
+    }
+
+    if (blob && (!allowedImageTypes.has(blob.type) || blob.size > 15 * 1024 * 1024)) blob = undefined;
+
+    if (!blob) {
+      cameraCanvas.width = cameraVideo.videoWidth;
+      cameraCanvas.height = cameraVideo.videoHeight;
+      const context = cameraCanvas.getContext("2d");
+      if (!context) throw new Error("Canvas indisponível");
+      context.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+      blob = await new Promise((resolve) => cameraCanvas.toBlob(resolve, "image/jpeg", 0.96));
+    }
     if (!blob) throw new Error("Falha ao gerar a foto");
 
     const capturedAt = Date.now();
-    capturedFiles.push(new File([blob], `foto-${capturedAt}.jpg`, {
-      type: "image/jpeg",
+    const photoType = allowedImageTypes.has(blob.type) ? blob.type : "image/jpeg";
+    const extensionByType = {
+      "image/png": "png",
+      "image/webp": "webp",
+      "image/heic": "heic",
+      "image/heif": "heif",
+    };
+    const extension = extensionByType[photoType] || "jpg";
+    capturedFiles.push(new File([blob], `foto-${capturedAt}.${extension}`, {
+      type: photoType,
       lastModified: capturedAt,
     }));
     renderSelectedFiles();

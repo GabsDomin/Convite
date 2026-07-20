@@ -250,7 +250,15 @@ test("protótipo mobile do álbum publica memórias, usa câmera e agrupa storie
   assert.match(album, /video\/webm/);
   assert.match(albumScript, /cameraVideoTrack\.getCapabilities\(\)/);
   assert.match(albumScript, /cameraVideoTrack\.applyConstraints\(\{ advanced: \[\{ zoom \}\] \}\)/);
+  assert.match(albumScript, /new ImageCapture\(cameraVideoTrack\)/);
+  assert.match(albumScript, /cameraImageCapture\.getPhotoCapabilities\(\)/);
+  assert.match(albumScript, /cameraPhotoSettings[\s\S]*?cameraImageCapture\.takePhoto\(cameraPhotoSettings\)/);
+  assert.match(albumScript, /cameraCanvas\.toBlob\(resolve, "image\/jpeg", 0\.96\)/);
+  assert.match(albumScript, /photoMode \? 2560 : 1920/);
+  assert.match(albumScript, /cameraVideoTrack\.contentHint = cameraMode === "photo" \? "detail" : "motion"/);
   assert.match(albumScript, /new MediaRecorder\(cameraStream/);
+  assert.match(albumScript, /videoBitsPerSecond: getRecordingVideoBitrate\(\)/);
+  assert.match(albumScript, /audioBitsPerSecond: 128_000/);
   assert.match(albumScript, /cameraGalleryButton\.addEventListener\("click"/);
   assert.match(albumStyles, /\.camera-panel[\s\S]*?position:\s*fixed[\s\S]*?height:\s*100dvh/);
   assert.match(albumScript, /maximumRecordingDuration = 30_000/);
