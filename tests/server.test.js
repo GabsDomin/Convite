@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import net from "node:net";
@@ -6,6 +7,17 @@ import { after, before, test } from "node:test";
 
 let serverProcess;
 let baseUrl;
+
+const albumSigningSecret = "album-test-signing-secret-with-32-characters";
+
+function albumSessionCookie(guestName = "Pessoa Teste") {
+  const payload = Buffer.from(JSON.stringify({
+    guestName,
+    expiresAt: Date.now() + 60 * 60 * 1000,
+  }), "utf8").toString("base64url");
+  const signature = createHmac("sha256", albumSigningSecret).update(payload).digest("base64url");
+  return `gab_naia_album_session=${payload}.${signature}`;
+}
 
 async function findAvailablePort() {
   return new Promise((resolve, reject) => {
@@ -54,8 +66,9 @@ before(async () => {
       R2_SECRET_ACCESS_KEY: "r2-secret-key-test",
       R2_BUCKET_NAME: "gab-naia-album",
       R2_PUBLIC_BASE_URL: "https://media.example.com",
-      ALBUM_UPLOAD_SIGNING_SECRET: "album-test-signing-secret-with-32-characters",
+      ALBUM_UPLOAD_SIGNING_SECRET: albumSigningSecret,
       ALBUM_UPLOAD_CODE: "2811",
+      SITE_URL: "http://127.0.0.1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -74,7 +87,8 @@ test("serve somente os arquivos públicos esperados", async () => {
     "/",
     "/styles.css",
     "/script.js",
-    "/album",
+    "/album/login",
+    "/album-login.js",
     "/album.css",
     "/album.js",
     "/assets/favicon.png",
@@ -87,6 +101,10 @@ test("serve somente os arquivos públicos esperados", async () => {
     assert.equal(response.status, 200, pathname);
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   }
+
+  const albumRedirect = await fetch(`${baseUrl}/album`, { redirect: "manual" });
+  assert.equal(albumRedirect.status, 302);
+  assert.equal(albumRedirect.headers.get("location"), "/album/login");
 });
 
 test("não expõe código, configuração, Git ou SQL", async () => {
@@ -114,7 +132,10 @@ test("configuração pública não contém segredos", async () => {
 test("URL do R2 é temporária, vinculada a um arquivo e não expõe segredo", async () => {
   const response = await fetch(`${baseUrl}/api/album/upload-signature`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: albumSessionCookie(),
+    },
     body: JSON.stringify({
       guestName: "Pessoa Teste",
       category: "Festa",
@@ -144,7 +165,10 @@ test("URL do R2 é temporária, vinculada a um arquivo e não expõe segredo", a
 test("criação de upload exige o código privado do álbum", async () => {
   const response = await fetch(`${baseUrl}/api/album/upload-signature`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: albumSessionCookie(),
+    },
     body: JSON.stringify({
       guestName: "Pessoa Teste",
       category: "Festa",
@@ -160,10 +184,34 @@ test("criação de upload exige o código privado do álbum", async () => {
   assert.match(payload.error, /código do álbum incorreto/i);
 });
 
+test("exclusão de mídia exige administrador do álbum", async () => {
+  const mediaId = "00000000-0000-4000-8000-000000000001";
+  const noSession = await fetch(`${baseUrl}/api/album/media/${mediaId}`, { method: "DELETE" });
+  assert.equal(noSession.status, 401);
+
+  const notAdmin = await fetch(`${baseUrl}/api/album/media/${mediaId}`, {
+    method: "DELETE",
+    headers: { Cookie: albumSessionCookie("Pessoa Teste") },
+  });
+  const notAdminPayload = await notAdmin.json();
+  assert.equal(notAdmin.status, 403);
+  assert.match(notAdminPayload.error, /administrador do álbum/i);
+});
+
+test("APIs do álbum exigem sessão autenticada", async () => {
+  const response = await fetch(`${baseUrl}/api/album/media`);
+  const payload = await response.json();
+  assert.equal(response.status, 401);
+  assert.match(payload.error, /entre no álbum/i);
+});
+
 test("registro do álbum rejeita autorização de upload adulterada", async () => {
   const response = await fetch(`${baseUrl}/api/album/media`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: albumSessionCookie(),
+    },
     body: JSON.stringify({
       uploadToken: "autorizacao.adulterada",
     }),
@@ -181,6 +229,14 @@ test("rejeita origem externa, entrada inválida e corpo excessivo", async () => 
     body: JSON.stringify({ guestName: "Pessoa Teste", partySize: "Somente eu" }),
   });
   assert.equal(externalOrigin.status, 403);
+
+  const singleName = await fetch(`${baseUrl}/api/rsvp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guestName: "Gabriel", partySize: "Somente eu" }),
+  });
+  assert.equal(singleName.status, 400);
+  assert.match((await singleName.json()).error, /nome e sobrenome/i);
 
   const invalidInput = await fetch(`${baseUrl}/api/rsvp`, {
     method: "POST",
@@ -250,6 +306,8 @@ test("confirmação prioriza os detalhes da cerimônia sem pressionar por presen
   assert.match(script, /detailsButton\.hidden = false/);
   assert.match(script, /Que alegria ter você conosco!/);
   assert.match(script, /se desejar, nossa lista de presentes/);
+  assert.match(script, /getKnownGuestName\(\)/);
+  assert.match(script, /openGiftModal[\s\S]*value="\$\{knownGuestName/);
   assert.doesNotMatch(script, /Se entrou aqui procurando um presentinho/);
 });
 
@@ -263,38 +321,70 @@ test("detalhes apresentam cerimônia, jantar e programação sem traje ou padrin
 });
 
 test("confirmação diferencia indivíduo, casal e responsável com menores", async () => {
-  const [script, migration] = await Promise.all([
+  const [script, migration, server] = await Promise.all([
     readFile(new URL("../script.js", import.meta.url), "utf8"),
     readFile(new URL("../supabase-rsvp-guests.sql", import.meta.url), "utf8"),
+    readFile(new URL("../server.js", import.meta.url), "utf8"),
   ]);
 
-  assert.match(script, /Somente minha presença/);
-  assert.match(script, /Eu e meu\/minha companheiro\(a\)/);
-  assert.match(script, /Eu e menor\(es\) sob minha responsabilidade/);
-  assert.match(script, /Adultos devem confirmar separadamente/);
-  assert.match(script, /getAll\("additionalGuestNames"\)/);
-  assert.doesNotMatch(script, /<option>Eu e meus filhos<\/option>/);
+  assert.match(script, /rsvpWizardSetStep/);
+  assert.match(script, /data-rsvp-include-partner/);
+  assert.match(script, /Adicionar outro filho\(a\)/);
+  assert.match(script, /showRsvpError/);
+  assert.match(script, /data-rsvp-restore/);
+  assert.match(script, /captureRsvpDraft/);
+  assert.match(script, /Cada casal pode confirmar pelo par/);
+  assert.doesNotMatch(script, /rsvp-policy/);
+  assert.doesNotMatch(script, /confirmationType/);
   assert.match(migration, /add column if not exists additional_guest_names text\[\]/i);
   assert.match(migration, /p_additional_guest_names text\[\] default/i);
-  assert.match(migration, /cardinality\(clean_additional_names\) <> 1/i);
+  assert.match(migration, /cardinality\(clean_additional_names\) not between 1 and 7/i);
+  assert.match(migration, /already_confirmed boolean/i);
+  assert.match(migration, /true as already_confirmed/);
+  assert.doesNotMatch(migration, /on conflict \(normalized_guest_name\)/i);
+  assert.match(script, /alreadyConfirmed/);
+  assert.match(script, /já estava confirmada/i);
+  assert.match(server, /alreadyConfirmed: Boolean\(row\?\.already_confirmed\)/);
 });
 
 test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa stories por convidado", async () => {
-  const [index, album, albumStyles, albumScript, server, albumSchema] = await Promise.all([
+  const [index, album, albumLogin, albumLoginScript, albumStyles, albumScript, server, albumSchema, albumAuthSchema] = await Promise.all([
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../album.html", import.meta.url), "utf8"),
+    readFile(new URL("../album-login.html", import.meta.url), "utf8"),
+    readFile(new URL("../album-login.js", import.meta.url), "utf8"),
     readFile(new URL("../album.css", import.meta.url), "utf8"),
     readFile(new URL("../album.js", import.meta.url), "utf8"),
     readFile(new URL("../server.js", import.meta.url), "utf8"),
     readFile(new URL("../supabase-album-schema.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase-album-auth.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(index, /href="\/album"[^>]*>Conhecer o álbum coletivo</i);
-  assert.match(album, /Os novos envios aparecem imediatamente, sem fila de aprovação\./i);
-  assert.match(albumScript, /Os envios desta tela ficam somente neste navegador/i);
+  assert.match(album, /aria-label="Stories dos convidados"/i);
+  assert.match(album, /gallery-intro/);
+  assert.match(album, /Memórias do nosso dia/);
+  assert.doesNotMatch(album, /Confirmo que posso compartilhar/i);
+  assert.match(albumScript, /startAutoplay/);
+  assert.match(albumScript, /showLocalAlbumStatus/);
   assert.match(album, /Até 10 arquivos · fotos e vídeos de até 500 MB cada · backup automático dos originais/i);
-  assert.match(album, /data-album-code-field/);
-  assert.match(album, /data-upload-progress/);
+  assert.match(album, /data-album-logout/);
+  assert.match(albumLogin, /data-album-login-form/);
+  assert.match(albumLogin, /data-album-known-name/);
+  assert.match(albumLoginScript, /gabriel-halanaia-rsvp/);
+  assert.match(albumLoginScript, /applyKnownNameMode/);
+  assert.match(albumAuthSchema, /authenticate_album_guest/i);
+  assert.match(albumAuthSchema, /extensions\.crypt\('123456'/);
+  assert.match(albumAuthSchema, /set search_path = public, extensions/);
+  assert.match(album, /data-download-media/);
+  assert.match(album, /data-delete-media/);
+  assert.match(albumScript, /downloadMediaFile/);
+  assert.match(albumScript, /albumIsAdmin/);
+  assert.match(albumScript, /deleteActiveMedia/);
+  assert.match(server, /isAlbumAdmin/);
+  assert.match(server, /albumMediaDeleteMatch/);
+  assert.match(server, /Gabriel Domingues/);
+  assert.match(albumScript, /Baixar original/);
   assert.match(albumScript, /memoryGrid\.prepend\(fragment\)/);
   assert.match(albumScript, /URL\.createObjectURL\(file\)/);
   assert.match(albumScript, /\/api\/album\/upload-signature/);
@@ -321,7 +411,12 @@ test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa 
   assert.match(album, /class="mobile-action-bar"/i);
   assert.match(albumStyles, /\.story-viewer[\s\S]*?height:\s*min\(calc\(100vh/i);
   assert.match(albumStyles, /\.memory-grid[\s\S]*?columns:\s*2/i);
-  assert.match(albumScript, /storyGroups\.set\(guestName, \{ slides \}\)/);
+  assert.match(albumScript, /const storyGroups = new Map\(\)/);
+  assert.match(albumScript, /storyGroupHasMedia/);
+  assert.match(albumScript, /MAX_CAROUSEL_PHOTOS = 4/);
+  assert.match(albumScript, /function buildGalleryTiles\(entries\)/);
+  assert.match(albumScript, /function getStoryDisplayName\(person\)/);
+  assert.match(albumScript, /buildStoryDisplayNameMap/);
   assert.match(albumScript, /function openStory\(person\)/);
   assert.match(album, /data-open-camera[\s\S]*?Abrir câmera/i);
   assert.match(album, /data-camera-video/);

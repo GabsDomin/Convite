@@ -38,7 +38,8 @@ returns table (
   party_size text,
   additional_guest_names text[],
   created_at timestamptz,
-  updated_at timestamptz
+  updated_at timestamptz,
+  already_confirmed boolean
 )
 language plpgsql
 security definer
@@ -66,8 +67,15 @@ begin
   ) candidate
   where candidate.clean_name <> '';
 
-  if char_length(clean_name) not between 2 and 120 then
+  if char_length(clean_name) not between 3 and 120 then
     raise exception 'Nome obrigatório';
+  end if;
+
+  if (
+    select count(*) filter (where char_length(trim(part)) >= 2)
+    from unnest(string_to_array(clean_name, ' ')) as part
+  ) < 2 then
+    raise exception 'Informe nome e sobrenome';
   end if;
 
   if selected_party_size not in ('Somente eu', 'Casal', 'Responsável e menores') then
@@ -77,23 +85,27 @@ begin
   if exists (
     select 1
     from unnest(clean_additional_names) additional_name
-    where char_length(additional_name) not between 2 and 120
+    where char_length(additional_name) not between 3 and 120
+       or (
+         select count(*) filter (where char_length(trim(part)) >= 2)
+         from unnest(string_to_array(additional_name, ' ')) as part
+       ) < 2
   ) then
-    raise exception 'Informe o nome completo de cada pessoa';
+    raise exception 'Informe nome e sobrenome de cada pessoa';
   end if;
 
   if selected_party_size = 'Somente eu' and cardinality(clean_additional_names) <> 0 then
     raise exception 'A confirmação individual não deve incluir outros nomes';
   end if;
 
-  if selected_party_size = 'Casal' and cardinality(clean_additional_names) <> 1 then
+  if (selected_party_size = 'Casal' and cardinality(clean_additional_names) not between 1 and 7 then
     raise exception 'Informe o nome do seu companheiro ou companheira';
   end if;
 
   if selected_party_size = 'Responsável e menores'
     and not legacy_children_confirmation
     and cardinality(clean_additional_names) not between 1 and 6 then
-    raise exception 'Informe o nome de cada menor sob sua responsabilidade';
+    raise exception 'Informe o nome de cada filho';
   end if;
 
   if exists (
@@ -133,6 +145,21 @@ begin
   from public.rsvps r
   where r.normalized_guest_name = normalized_name;
 
+  if existing_rsvp_id is not null then
+    return query
+    select
+      r.id,
+      r.guest_name,
+      r.party_size,
+      r.additional_guest_names,
+      r.created_at,
+      r.updated_at,
+      true as already_confirmed
+    from public.rsvps r
+    where r.id = existing_rsvp_id;
+    return;
+  end if;
+
   if exists (
     select 1
     from public.rsvps other_rsvp
@@ -156,23 +183,17 @@ begin
     raise exception 'Uma das pessoas informadas já possui confirmação';
   end if;
 
+  return query
   insert into public.rsvps (guest_name, party_size, additional_guest_names)
   values (clean_name, selected_party_size, clean_additional_names)
-  on conflict (normalized_guest_name)
-  do update set
-    guest_name = excluded.guest_name,
-    party_size = excluded.party_size,
-    additional_guest_names = excluded.additional_guest_names
   returning
     rsvps.id,
     rsvps.guest_name,
     rsvps.party_size,
     rsvps.additional_guest_names,
     rsvps.created_at,
-    rsvps.updated_at
-  into id, guest_name, party_size, additional_guest_names, created_at, updated_at;
-
-  return next;
+    rsvps.updated_at,
+    false as already_confirmed;
 end;
 $$;
 

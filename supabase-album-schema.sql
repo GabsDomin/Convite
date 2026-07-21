@@ -90,13 +90,7 @@ alter table public.album_media
     or (storage_provider = 'cloudinary' and public_id is not null)
   ) not valid;
 
-do $$
-begin
-  alter table public.album_media
-    add constraint album_media_storage_key_key unique (storage_key);
-exception
-  when duplicate_object then null;
-end $$;
+-- storage_key já nasce UNIQUE na criação da tabela (constraint album_media_storage_key_key).
 
 create index if not exists album_media_created_at_idx
   on public.album_media (created_at desc);

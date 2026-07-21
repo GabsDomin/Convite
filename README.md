@@ -46,9 +46,10 @@ supabase-payments.sql
 supabase-restricted-guests.sql
 supabase-rsvp-guests.sql
 supabase-album-schema.sql
+supabase-album-auth.sql
 ```
 
-Os scripts são reaplicáveis e restringem tabelas e funções à `service_role`. O navegador não recebe uma chave do Supabase.
+O arquivo `supabase-album-auth.sql` cria a senha padrão do álbum (`123456`, salva como hash) e a função que libera o login apenas para nomes confirmados no RSVP.
 
 ### Nomes sem acesso à confirmação
 

@@ -13,6 +13,7 @@ let audioBlocked = false;
 let audioPausedByVisibility = false;
 let audioWasPlayingBeforeVisibilityPause = false;
 let userMutedAudio = false;
+let rsvpDraft = null;
 let paymentConfig = null;
 let paymentConfigPromise = null;
 let giftLoadPromise = null;
@@ -228,12 +229,26 @@ function updateCountdown() {
   countdown.textContent = days === 1 ? "Falta 1 dia" : `Faltam ${days} dias`;
 }
 
+function hasFullGuestName(value) {
+  const parts = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .filter(Boolean);
+  return parts.length >= 2 && parts.every((part) => part.length >= 2);
+}
+
 function getSavedRsvp() {
   try {
     return JSON.parse(localStorage.getItem(rsvpStorageKey));
   } catch (error) {
     return null;
   }
+}
+
+function getKnownGuestName() {
+  const savedName = getSavedRsvp()?.name?.trim().replace(/\s+/g, " ");
+  return savedName && hasFullGuestName(savedName) ? savedName : "";
 }
 
 function saveRsvp(name, partySize, additionalGuestNames = []) {
@@ -254,6 +269,7 @@ function saveRsvp(name, partySize, additionalGuestNames = []) {
 function renderRsvpState() {
   const savedRsvp = getSavedRsvp();
   const heroCopy = document.querySelector(".hero-copy");
+  const heroActions = document.querySelector(".hero-actions");
   const rsvpButton = document.querySelector("[data-open-rsvp]");
   const detailsButton = document.querySelector("[data-scroll-details]");
 
@@ -261,7 +277,8 @@ function renderRsvpState() {
 
   heroCopy.textContent = `Olá, ${savedRsvp.name}! Sua presença já foi confirmada. Que alegria ter você conosco! Confira os detalhes da cerimônia e, se desejar, nossa lista de presentes.`;
   heroCopy.classList.add("confirmed");
-  rsvpButton.hidden = true;
+  heroActions?.classList.add("is-rsvp-confirmed");
+  rsvpButton.remove();
   if (detailsButton) detailsButton.hidden = false;
 }
 
@@ -585,7 +602,77 @@ function showError(message) {
   `);
 }
 
-function showGuestNotInvited() {
+function showRsvpIssue({ title, message, draft }) {
+  rsvpDraft = draft;
+  openModal(`
+    <div class="modal-icon">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+    </div>
+    <h2 id="modal-title" class="success-title">${escapeHtml(title)}</h2>
+    <p>${escapeHtml(message)}</p>
+    <div class="modal-actions rsvp-error-actions">
+      <button class="button secondary" type="button" data-rsvp-restore>Voltar</button>
+      <button class="button primary" type="button" data-close-modal>Fechar</button>
+    </div>
+  `);
+}
+
+function showRsvpError(message, draft) {
+  showRsvpIssue({
+    title: "Não foi possível salvar",
+    message,
+    draft,
+  });
+}
+
+function captureRsvpDraft(form) {
+  return {
+    step: Number(form.dataset.rsvpStep || 1),
+    guestName: String(form.querySelector('[name="guestName"]')?.value || ""),
+    includePartner: Boolean(form.querySelector("[data-rsvp-include-partner]")?.checked),
+    includeChildren: Boolean(form.querySelector("[data-rsvp-include-children]")?.checked),
+    partnerName: String(form.querySelector('[name="partnerName"]')?.value || ""),
+    childrenNames: Array.from(form.querySelectorAll('[name="childrenNames"]')).map((input) => String(input.value || "")),
+  };
+}
+
+function restoreRsvpDraft(form, draft) {
+  form.querySelector('[name="guestName"]').value = draft.guestName;
+  form.querySelector("[data-rsvp-include-partner]").checked = draft.includePartner;
+  form.querySelector("[data-rsvp-include-children]").checked = draft.includeChildren;
+
+  const partnerInput = form.querySelector('[name="partnerName"]');
+  if (partnerInput) partnerInput.value = draft.partnerName;
+
+  const childFields = form.querySelector("[data-rsvp-child-fields]");
+  if (childFields) {
+    childFields.replaceChildren();
+    if (draft.includeChildren) {
+      const names = draft.childrenNames.length ? draft.childrenNames : [""];
+      names.forEach((name) => {
+        appendRsvpChildField(form, { focus: false });
+        const inputs = form.querySelectorAll('[name="childrenNames"]');
+        inputs[inputs.length - 1].value = name;
+      });
+    }
+  }
+
+  rsvpWizardSetStep(form, draft.step);
+  updateRsvpSections(form);
+  updateRsvpSummary(form);
+  form.querySelector('[name="guestName"]')?.focus();
+}
+
+function showGuestNotInvited(draft = null) {
+  if (draft) {
+    showRsvpIssue({
+      title: "Lista de convidados",
+      message: "Infelizmente, seu nome não está na lista de convidados.",
+      draft,
+    });
+    return;
+  }
+
   openModal(`
     <div class="modal-icon">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
@@ -598,74 +685,218 @@ function showGuestNotInvited() {
   `);
 }
 
-function updateRsvpAddButton(form) {
-  const addButton = form.querySelector("[data-add-rsvp-guest]");
-  const partySize = form.querySelector("[data-rsvp-party-size]")?.value;
-  const guestCount = form.querySelectorAll('[name="additionalGuestNames"]').length;
+function updateRsvpChildButton(form) {
+  const addButton = form.querySelector("[data-add-rsvp-child]");
+  const childCount = form.querySelectorAll('[name="childrenNames"]').length;
   if (!addButton) return;
 
-  addButton.hidden = partySize !== "Responsável e menores";
-  addButton.disabled = guestCount >= 6;
-  addButton.textContent = guestCount >= 6 ? "Limite de seis menores atingido" : "+ Adicionar outra criança";
+  addButton.disabled = childCount >= 6;
+  addButton.textContent = childCount >= 6 ? "Limite de seis filhos" : "+ Adicionar outro filho(a)";
 }
 
-function appendRsvpGuestField(form, { couple = false, removable = true } = {}) {
-  const fields = form.querySelector("[data-rsvp-guest-fields]");
-  if (!fields || fields.querySelectorAll('[name="additionalGuestNames"]').length >= 6) return;
+function appendRsvpChildField(form, { focus = true } = {}) {
+  const fields = form.querySelector("[data-rsvp-child-fields]");
+  if (!fields || fields.querySelectorAll('[name="childrenNames"]').length >= 6) return;
 
   const row = document.createElement("div");
   row.className = "additional-guest-row";
 
   const label = document.createElement("label");
   const labelText = document.createElement("span");
-  labelText.textContent = couple ? "Nome do(a) companheiro(a)" : "Nome da criança";
+  const childIndex = fields.querySelectorAll('[name="childrenNames"]').length + 1;
+  labelText.textContent = childIndex === 1 ? "Nome do filho(a)" : `Nome do ${childIndex}º filho(a)`;
 
   const input = document.createElement("input");
-  input.name = "additionalGuestNames";
+  input.name = "childrenNames";
   input.required = true;
   input.autocomplete = "off";
-  input.placeholder = couple ? "Digite o nome completo" : "Digite o nome da criança";
+  input.placeholder = "Ex.: Ana Souza";
 
   label.append(labelText, input);
   row.append(label);
 
-  if (removable) {
+  if (childIndex > 1) {
     const removeButton = document.createElement("button");
     removeButton.className = "remove-guest-button";
     removeButton.type = "button";
-    removeButton.dataset.removeRsvpGuest = "";
-    removeButton.setAttribute("aria-label", "Remover este nome");
+    removeButton.dataset.removeRsvpChild = "";
+    removeButton.setAttribute("aria-label", "Remover este filho");
     removeButton.textContent = "×";
     row.append(removeButton);
   }
 
   fields.append(row);
-  updateRsvpAddButton(form);
-  input.focus();
+  updateRsvpChildButton(form);
+  if (focus) input.focus();
 }
 
-function updateRsvpGuestFields(form) {
-  const partySize = form.querySelector("[data-rsvp-party-size]")?.value;
-  const container = form.querySelector("[data-rsvp-additional]");
-  const fields = form.querySelector("[data-rsvp-guest-fields]");
-  const helper = form.querySelector("[data-rsvp-helper]");
-  if (!container || !fields || !helper) return;
+function updateRsvpSections(form) {
+  const includePartner = form.querySelector("[data-rsvp-include-partner]")?.checked;
+  const includeChildren = form.querySelector("[data-rsvp-include-children]")?.checked;
+  const partnerSection = form.querySelector("[data-rsvp-partner]");
+  const childrenSection = form.querySelector("[data-rsvp-children]");
+  const childFields = form.querySelector("[data-rsvp-child-fields]");
+  const partnerInput = form.querySelector('[name="partnerName"]');
+  const stepCopy = form.querySelector("[data-rsvp-step-copy]");
 
-  fields.replaceChildren();
-  container.hidden = partySize === "Somente eu";
+  if (partnerSection) partnerSection.hidden = !includePartner;
+  if (partnerInput) partnerInput.required = Boolean(includePartner);
 
-  if (partySize === "Casal") {
-    helper.textContent = "Um dos dois pode confirmar pelo casal. Informe o nome completo da outra pessoa.";
-    appendRsvpGuestField(form, { couple: true, removable: false });
-  } else if (partySize === "Responsável e menores") {
-    helper.textContent = "Inclua somente menores de 18 anos sob sua responsabilidade. Adultos devem confirmar separadamente.";
-    appendRsvpGuestField(form, { removable: false });
+  if (childrenSection) childrenSection.hidden = !includeChildren;
+  if (includeChildren && childFields && childFields.children.length === 0) {
+    appendRsvpChildField(form, { focus: false });
+  }
+  if (!includeChildren && childFields) childFields.replaceChildren();
+
+  if (stepCopy) {
+    if (includePartner && includeChildren) {
+      stepCopy.textContent = "Informe o nome do seu parceiro ou parceira e de cada filho(a).";
+    } else if (includePartner) {
+      stepCopy.textContent = "Informe o nome completo do seu parceiro ou parceira.";
+    } else if (includeChildren) {
+      stepCopy.textContent = "Informe o nome completo de cada filho(a) que virá com você.";
+    }
   }
 
-  updateRsvpAddButton(form);
+  updateRsvpChildButton(form);
+  updateRsvpSummary(form);
 }
 
-function openRsvpModal() {
+function updateRsvpSummary(form) {
+  const summary = form.querySelector("[data-rsvp-summary]");
+  if (!summary) return;
+
+  const guestName = String(form.querySelector('[name="guestName"]')?.value || "").trim();
+  const includePartner = form.querySelector("[data-rsvp-include-partner]")?.checked;
+  const includeChildren = form.querySelector("[data-rsvp-include-children]")?.checked;
+  const partnerName = String(form.querySelector('[name="partnerName"]')?.value || "").trim();
+  const childrenNames = Array.from(form.querySelectorAll('[name="childrenNames"]'))
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean);
+
+  const people = [guestName];
+  if (includePartner && partnerName) people.push(partnerName);
+  if (includeChildren) people.push(...childrenNames);
+
+  summary.innerHTML = `
+    <span class="rsvp-summary-label">Confirmando presença de</span>
+    <strong>${escapeHtml(people.filter(Boolean).join(" · ") || guestName || "—")}</strong>
+  `;
+}
+
+function rsvpWizardSetStep(form, step) {
+  form.dataset.rsvpStep = String(step);
+
+  form.querySelectorAll("[data-rsvp-step]").forEach((panel) => {
+    panel.hidden = panel.dataset.rsvpStep !== String(step);
+  });
+
+  form.querySelectorAll("[data-rsvp-progress]").forEach((item) => {
+    const itemStep = Number(item.dataset.rsvpProgress);
+    item.classList.toggle("is-active", itemStep === step);
+    item.classList.toggle("is-complete", itemStep < step);
+  });
+
+  const backButton = form.querySelector("[data-rsvp-back]");
+  const nextButton = form.querySelector("[data-rsvp-next]");
+  const submitButton = form.querySelector("[data-rsvp-submit]");
+  const cancelButton = form.querySelector("[data-rsvp-cancel]");
+
+  if (backButton) backButton.hidden = step === 1;
+  if (cancelButton) cancelButton.hidden = step !== 1;
+  if (nextButton) nextButton.hidden = step === 3;
+  if (submitButton) submitButton.hidden = step !== 3;
+
+  if (step === 3) {
+    updateRsvpSections(form);
+    const focusTarget = form.querySelector('[data-rsvp-partner]:not([hidden]) input, [data-rsvp-children]:not([hidden]) input');
+    (focusTarget || submitButton)?.focus();
+  } else if (step === 1) {
+    form.querySelector('[name="guestName"]')?.focus();
+  }
+}
+
+function validateRsvpWizardStep(form, step) {
+  if (step === 1) {
+    const guestName = String(form.querySelector('[name="guestName"]')?.value || "").trim().replace(/\s+/g, " ");
+    if (!hasFullGuestName(guestName)) {
+      return "Informe seu nome e sobrenome.";
+    }
+    return null;
+  }
+
+  if (step === 2) return null;
+
+  const payload = buildRsvpPayload(new FormData(form));
+  return payload.error || null;
+}
+
+function rsvpWizardContinue(form) {
+  const step = Number(form.dataset.rsvpStep || 1);
+  const error = validateRsvpWizardStep(form, step);
+  if (error) {
+    showRsvpError(error, captureRsvpDraft(form));
+    return;
+  }
+
+  if (step === 1) {
+    rsvpWizardSetStep(form, 2);
+    return;
+  }
+
+  if (step === 2) {
+    const includePartner = form.querySelector("[data-rsvp-include-partner]")?.checked;
+    const includeChildren = form.querySelector("[data-rsvp-include-children]")?.checked;
+    if (!includePartner && !includeChildren) {
+      form.requestSubmit();
+      return;
+    }
+    rsvpWizardSetStep(form, 3);
+  }
+}
+
+function buildRsvpPayload(formData) {
+  const guestName = String(formData.get("guestName") || "").trim().replace(/\s+/g, " ");
+  const includePartner = formData.get("includePartner") === "on";
+  const includeChildren = formData.get("includeChildren") === "on";
+  const partnerName = String(formData.get("partnerName") || "").trim().replace(/\s+/g, " ");
+  const childrenNames = formData
+    .getAll("childrenNames")
+    .map((name) => String(name || "").trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+
+  if (!hasFullGuestName(guestName)) {
+    return { error: "Informe seu nome e sobrenome." };
+  }
+
+  if (includePartner) {
+    if (!hasFullGuestName(partnerName)) {
+      return { error: "Informe o nome e sobrenome do seu parceiro ou parceira." };
+    }
+    if (includeChildren && childrenNames.length === 0) {
+      return { error: "Informe o nome de pelo menos um filho." };
+    }
+    const additionalGuestNames = includeChildren ? [partnerName, ...childrenNames] : [partnerName];
+    if (additionalGuestNames.some((name) => !hasFullGuestName(name))) {
+      return { error: "Informe nome e sobrenome de cada pessoa." };
+    }
+    return { guestName, partySize: "Casal", additionalGuestNames };
+  }
+
+  if (includeChildren) {
+    if (childrenNames.length === 0) {
+      return { error: "Informe o nome de pelo menos um filho." };
+    }
+    if (childrenNames.some((name) => !hasFullGuestName(name))) {
+      return { error: "Informe nome e sobrenome de cada filho." };
+    }
+    return { guestName, partySize: "Responsável e menores", additionalGuestNames: childrenNames };
+  }
+
+  return { guestName, partySize: "Somente eu", additionalGuestNames: [] };
+}
+
+function openRsvpModal(restoreDraft = null) {
   openModal(`
     <div class="modal-icon">
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -673,47 +904,87 @@ function openRsvpModal() {
       </svg>
     </div>
     <h2 id="modal-title">Confirmar presença</h2>
-    <p>Informe quem estará presente no casamento.</p>
-    <p class="rsvp-policy">Cada adulto confirma a própria presença. Para casais, uma pessoa pode confirmar pelo par. Pais ou responsáveis podem incluir menores de 18 anos.</p>
-    <form data-rsvp-form>
-      <label>
-        Seu nome
-        <input name="guestName" required autocomplete="name" placeholder="Digite seu nome" />
-      </label>
-      <label>
-        Tipo de confirmação
-        <select name="partySize" data-rsvp-party-size required>
-          <option value="Somente eu">Somente minha presença</option>
-          <option value="Casal">Eu e meu/minha companheiro(a)</option>
-          <option value="Responsável e menores">Eu e menor(es) sob minha responsabilidade</option>
-        </select>
-      </label>
-      <div class="rsvp-additional" data-rsvp-additional hidden>
-        <p class="rsvp-helper" data-rsvp-helper></p>
-        <div class="additional-guest-fields" data-rsvp-guest-fields></div>
-        <button class="add-guest-button" type="button" data-add-rsvp-guest>+ Adicionar outra criança</button>
+    <p class="rsvp-intro">Que alegria saber que você vem! Cada casal pode confirmar pelo par, e cada pai ou mãe pode confirmar pelo filho.</p>
+    <form data-rsvp-form data-rsvp-step="1">
+      <div class="rsvp-progress" aria-hidden="true">
+        <span class="is-active" data-rsvp-progress="1">1. Você</span>
+        <span data-rsvp-progress="2">2. Acompanhantes</span>
+        <span data-rsvp-progress="3">3. Confirmar</span>
       </div>
-      <div class="modal-actions">
-        <button class="button secondary" type="button" data-close-modal>Cancelar</button>
-        <button class="button primary" type="submit">Enviar</button>
+
+      <section class="rsvp-step" data-rsvp-step="1">
+        <p class="rsvp-step-title">Como você se chama?</p>
+        <p class="rsvp-step-copy">Use nome e sobrenome, como no convite.</p>
+        <label>
+          Seu nome completo
+          <input name="guestName" required autocomplete="name" placeholder="Ex.: Maria Silva" />
+        </label>
+      </section>
+
+      <section class="rsvp-step" data-rsvp-step="2" hidden>
+        <p class="rsvp-step-title">Alguém vem com você?</p>
+        <p class="rsvp-step-copy">Se for só você, toque em continuar. Caso contrário, marque quem também estará presente.</p>
+        <div class="rsvp-option-grid">
+          <label class="rsvp-option-card">
+            <input type="checkbox" name="includePartner" data-rsvp-include-partner />
+            <span class="rsvp-option-icon" aria-hidden="true">♡</span>
+            <strong>Parceiro(a)</strong>
+            <small>Confirmo também pelo meu(minha) companheiro(a)</small>
+          </label>
+          <label class="rsvp-option-card">
+            <input type="checkbox" name="includeChildren" data-rsvp-include-children />
+            <span class="rsvp-option-icon" aria-hidden="true">✦</span>
+            <strong>Filho(s)</strong>
+            <small>Vou levar criança(s) da família</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="rsvp-step" data-rsvp-step="3" hidden>
+        <p class="rsvp-step-title">Só falta um detalhe</p>
+        <p class="rsvp-step-copy" data-rsvp-step-copy>Informe os nomes de quem vem com você.</p>
+        <div class="rsvp-summary" data-rsvp-summary></div>
+        <div class="rsvp-partner" data-rsvp-partner hidden>
+          <label>
+            Nome do(a) parceiro(a)
+            <input name="partnerName" autocomplete="off" placeholder="Ex.: João Souza" />
+          </label>
+        </div>
+        <div class="rsvp-children" data-rsvp-children hidden>
+          <div class="additional-guest-fields" data-rsvp-child-fields></div>
+          <button class="add-guest-button" type="button" data-add-rsvp-child>+ Adicionar outro filho(a)</button>
+        </div>
+      </section>
+
+      <div class="modal-actions rsvp-actions">
+        <button class="button secondary" type="button" data-rsvp-back hidden>Voltar</button>
+        <button class="button secondary" type="button" data-rsvp-cancel data-close-modal>Cancelar</button>
+        <button class="button primary" type="button" data-rsvp-next>Continuar</button>
+        <button class="button primary" type="submit" data-rsvp-submit hidden>Confirmar presença</button>
       </div>
     </form>
   `);
+
+  const form = modalContent.querySelector("[data-rsvp-form]");
+  if (!form) return;
+  if (restoreDraft) restoreRsvpDraft(form, restoreDraft);
+  else rsvpWizardSetStep(form, 1);
 }
 
 function openGiftModal(gift) {
   const isQuota = gift.type === "quota";
   const hasOnlinePayment = hasOnlinePaymentConfigured();
   const giftName = escapeHtml(gift.name);
+  const knownGuestName = getKnownGuestName();
 
   openModal(`
     <div class="modal-icon">${giftIcon()}</div>
     <h2 id="modal-title">${isQuota ? "Contribuir com cota" : "Escolher presente"}</h2>
-    <p>${isQuota ? `Escolha uma cota, informe seu nome e siga com a forma de pagamento que preferir para: <strong>${giftName}</strong>.` : `Informe seu nome e escolha como deseja presentear: <strong>${giftName}</strong>.`}</p>
+    <p>${isQuota ? `Escolha uma cota, informe seu nome e sobrenome e siga com a forma de pagamento que preferir para: <strong>${giftName}</strong>.` : `Informe seu nome e sobrenome e escolha como deseja presentear: <strong>${giftName}</strong>.`}</p>
     <form data-gift-form="${escapeAttribute(gift.id)}">
       <label>
-        Seu nome
-        <input name="guestName" required autocomplete="name" placeholder="Digite seu nome" />
+        Seu nome e sobrenome
+        <input name="guestName" required autocomplete="name" placeholder="Ex.: Maria Silva" value="${knownGuestName ? escapeAttribute(knownGuestName) : ""}" />
       </label>
       <label>
         Seu e-mail <span class="optional-label">opcional</span>
@@ -753,15 +1024,36 @@ function openGiftModal(gift) {
       </div>
     </form>
   `);
+
+  if (knownGuestName) {
+    const form = modalContent.querySelector("[data-gift-form]");
+    const nextFocus = form?.querySelector('input[name="buyerEmail"], select[name="quotaValue"], textarea[name="message"], button[data-payment-method]');
+    nextFocus?.focus();
+  }
 }
 
 document.addEventListener("change", (event) => {
-  if (!event.target.matches("[data-rsvp-party-size]")) return;
+  if (event.target.matches("[data-rsvp-include-partner], [data-rsvp-include-children]")) {
+    const form = event.target.closest("[data-rsvp-form]");
+    if (form) updateRsvpSections(form);
+  }
+});
+
+document.addEventListener("input", (event) => {
   const form = event.target.closest("[data-rsvp-form]");
-  if (form) updateRsvpGuestFields(form);
+  if (!form || Number(form.dataset.rsvpStep) !== 3) return;
+  if (event.target.matches('[name="guestName"], [name="partnerName"], [name="childrenNames"]')) {
+    updateRsvpSummary(form);
+  }
 });
 
 document.addEventListener("click", async (event) => {
+  const rsvpRestoreButton = event.target.closest("[data-rsvp-restore]");
+  if (rsvpRestoreButton) {
+    openRsvpModal(rsvpDraft);
+    return;
+  }
+
   const closeButton = event.target.closest("[data-close-modal]");
   if (closeButton) {
     closeModal();
@@ -778,18 +1070,35 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
-  const addRsvpGuestButton = event.target.closest("[data-add-rsvp-guest]");
-  if (addRsvpGuestButton) {
-    const form = addRsvpGuestButton.closest("[data-rsvp-form]");
-    if (form) appendRsvpGuestField(form);
+  const rsvpNextButton = event.target.closest("[data-rsvp-next]");
+  if (rsvpNextButton) {
+    const form = rsvpNextButton.closest("[data-rsvp-form]");
+    if (form) rsvpWizardContinue(form);
     return;
   }
 
-  const removeRsvpGuestButton = event.target.closest("[data-remove-rsvp-guest]");
-  if (removeRsvpGuestButton) {
-    const form = removeRsvpGuestButton.closest("[data-rsvp-form]");
-    removeRsvpGuestButton.closest(".additional-guest-row")?.remove();
-    if (form) updateRsvpAddButton(form);
+  const rsvpBackButton = event.target.closest("[data-rsvp-back]");
+  if (rsvpBackButton) {
+    const form = rsvpBackButton.closest("[data-rsvp-form]");
+    if (form) rsvpWizardSetStep(form, Math.max(1, Number(form.dataset.rsvpStep || 1) - 1));
+    return;
+  }
+
+  const addRsvpChildButton = event.target.closest("[data-add-rsvp-child]");
+  if (addRsvpChildButton) {
+    const form = addRsvpChildButton.closest("[data-rsvp-form]");
+    if (form) appendRsvpChildField(form);
+    return;
+  }
+
+  const removeRsvpChildButton = event.target.closest("[data-remove-rsvp-child]");
+  if (removeRsvpChildButton) {
+    const form = removeRsvpChildButton.closest("[data-rsvp-form]");
+    removeRsvpChildButton.closest(".additional-guest-row")?.remove();
+    if (form) {
+      updateRsvpChildButton(form);
+      updateRsvpSummary(form);
+    }
     return;
   }
 
@@ -841,25 +1150,31 @@ document.addEventListener("submit", async (event) => {
 
   if (rsvpForm) {
     event.preventDefault();
-    const formData = new FormData(rsvpForm);
-    const guestName = String(formData.get("guestName") || "");
-    const partySize = String(formData.get("partySize") || "");
-    const additionalGuestNames = formData
-      .getAll("additionalGuestNames")
-      .map((name) => String(name || "").trim())
-      .filter(Boolean);
+    const draft = captureRsvpDraft(rsvpForm);
+    const payload = buildRsvpPayload(new FormData(rsvpForm));
+    if (payload.error) {
+      showRsvpError(payload.error, draft);
+      return;
+    }
+
+    const { guestName, partySize, additionalGuestNames } = payload;
 
     try {
-      await requestJson("/api/rsvp", {
+      const result = await requestJson("/api/rsvp", {
         method: "POST",
         body: JSON.stringify({ guestName, partySize, additionalGuestNames }),
       });
       saveRsvp(guestName, partySize, additionalGuestNames);
       renderRsvpState();
-      showSuccess(`${additionalGuestNames.length ? "Presenças confirmadas" : "Presença confirmada"} com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.`);
+      rsvpDraft = null;
+      if (result.alreadyConfirmed) {
+        showSuccess("Sua presença já estava confirmada. Que alegria ter você conosco!");
+      } else {
+        showSuccess(`${additionalGuestNames.length ? "Presenças confirmadas" : "Presença confirmada"} com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.`);
+      }
     } catch (error) {
-      if (error.code === "guest_not_invited") showGuestNotInvited();
-      else showError(error.message);
+      if (error.code === "guest_not_invited") showGuestNotInvited(draft);
+      else showRsvpError(error.message, draft);
     }
   }
 
@@ -867,11 +1182,16 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(giftForm);
     const gift = gifts.find((item) => item.id === giftForm.dataset.giftForm);
-    const guestName = String(formData.get("guestName") || "");
+    const guestName = String(formData.get("guestName") || "").trim().replace(/\s+/g, " ");
     const buyerEmail = String(formData.get("buyerEmail") || "");
     const message = String(formData.get("message") || "");
     const quotaValue = Number(formData.get("quotaValue") || 0);
     const paymentMethod = String(formData.get("paymentMethod") || "in_person") === "online" ? "online" : "in_person";
+
+    if (!hasFullGuestName(guestName)) {
+      showError("Informe seu nome e sobrenome.");
+      return;
+    }
 
     if (paymentMethod === "online" && !hasOnlinePaymentConfigured()) {
       showError("O pagamento online ainda não está configurado. Por enquanto, escolha pessoalmente.");

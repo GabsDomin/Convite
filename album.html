@@ -12,15 +12,19 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/png" href="/assets/favicon.png" />
-    <link rel="stylesheet" href="/album.css?v=1" />
+    <link rel="stylesheet" href="/album.css?v=20260721-8" />
   </head>
   <body>
     <header class="album-topbar">
       <a class="back-link" href="/" aria-label="Voltar ao convite">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
-        Voltar ao convite
+        <span class="back-link-label back-link-label--full">Voltar ao convite</span>
+        <span class="back-link-label back-link-label--short">Voltar</span>
       </a>
-      <button class="button primary compact" type="button" data-open-upload>Compartilhar memórias</button>
+      <div class="album-topbar-actions">
+        <button class="button ghost compact" type="button" data-album-logout hidden>Sair</button>
+        <button class="button primary compact topbar-upload" type="button" data-open-upload>Compartilhar memórias</button>
+      </div>
     </header>
 
     <main>
@@ -59,33 +63,15 @@
         </div>
       </section>
 
-      <aside class="prototype-notice" aria-label="Status do álbum" data-album-status>
-        <span data-album-status-label>Preparando álbum</span>
-        <p data-album-status-copy>Verificando o armazenamento das fotos e vídeos...</p>
-      </aside>
-
-      <section class="stories-section" aria-labelledby="stories-title">
-        <div class="stories-heading">
-          <div>
-            <span>Agora</span>
-            <h2 id="stories-title">Stories dos convidados</h2>
-          </div>
-          <p>Toque em uma pessoa para acompanhar os momentos que ela compartilhou.</p>
-        </div>
-        <div class="stories-rail" data-stories-rail role="list" aria-label="Stories por convidado"></div>
-      </section>
-
       <section class="gallery-section" id="galeria" aria-labelledby="gallery-title">
-        <div class="gallery-heading">
-          <div>
-            <span class="eyebrow">Todos os registros</span>
-            <h2 id="gallery-title">Memórias recentes</h2>
-            <p>Os novos envios aparecem imediatamente, sem fila de aprovação.</p>
-          </div>
-          <button class="button primary gallery-upload" type="button" data-open-upload>+ Adicionar memórias</button>
-        </div>
+        <header class="gallery-intro">
+          <h2 id="gallery-title">Memórias do nosso dia</h2>
+          <p>Toque nos stories ou role para ver as fotos.</p>
+        </header>
 
-        <div class="gallery-toolbar">
+        <div class="stories-rail" data-stories-rail role="list" aria-label="Stories dos convidados"></div>
+
+        <div class="gallery-topbar">
           <div class="gallery-filters" aria-label="Filtrar memórias">
             <button type="button" data-filter="Todos" aria-pressed="true">Todos</button>
             <button type="button" data-filter="Preparativos" aria-pressed="false">Preparativos</button>
@@ -93,51 +79,16 @@
             <button type="button" data-filter="Jantar" aria-pressed="false">Jantar</button>
             <button type="button" data-filter="Festa" aria-pressed="false">Festa</button>
           </div>
-          <span class="memory-count" data-memory-count>3 espaços de exemplo</span>
+          <button class="button primary gallery-upload" type="button" data-open-upload>+ Enviar</button>
         </div>
 
-        <div class="memory-grid" data-memory-grid>
-          <article class="memory-card memory-card-tall" data-memory-category="Preparativos" data-demo-memory>
-            <div class="memory-placeholder placeholder-preparations" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="m12 3 1.5 5.2L19 10l-5.5 1.8L12 17l-1.5-5.2L5 10l5.5-1.8L12 3Z" /></svg>
-            </div>
-            <div class="memory-caption">
-              <span>Preparativos</span>
-              <strong>Os primeiros momentos</strong>
-              <small>Espaço de exemplo</small>
-            </div>
-          </article>
-
-          <article class="memory-card" data-memory-category="Cerimônia" data-demo-memory>
-            <div class="memory-placeholder placeholder-ceremony" aria-hidden="true">
-              <span>G <b>&amp;</b> H</span>
-              <small>28.11.2026</small>
-            </div>
-            <div class="memory-caption">
-              <span>Cerimônia</span>
-              <strong>O nosso “sim”</strong>
-              <small>Espaço de exemplo</small>
-            </div>
-          </article>
-
-          <article class="memory-card memory-card-wide" data-memory-category="Festa" data-demo-memory>
-            <div class="memory-placeholder placeholder-party" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M8 3v3M16 3v3M5 9h14M7 6h10a2 2 0 0 1 2 2v11H5V8a2 2 0 0 1 2-2Z" /></svg>
-              <span>Uma noite para lembrar</span>
-            </div>
-            <div class="memory-caption">
-              <span>Festa</span>
-              <strong>Memórias compartilhadas</strong>
-              <small>Espaço de exemplo</small>
-            </div>
-          </article>
-        </div>
+        <div class="memory-grid" data-memory-grid></div>
 
         <div class="gallery-empty" data-gallery-empty hidden>
           <span>♡</span>
-          <h3>Nenhuma memória nesta categoria</h3>
-          <p>Escolha outro filtro ou seja a primeira pessoa a compartilhar.</p>
-          <button class="button secondary" type="button" data-open-upload>Enviar uma memória</button>
+          <h3>Nenhuma memória por aqui</h3>
+          <p>Troque o filtro ou envie fotos do nosso dia.</p>
+          <button class="button secondary" type="button" data-open-upload>Enviar memória</button>
         </div>
       </section>
     </main>
@@ -161,7 +112,7 @@
 
         <label>
           Seu nome
-          <input name="guestName" type="text" maxlength="80" placeholder="Como podemos identificar você?" required />
+          <input name="guestName" type="text" maxlength="80" placeholder="Nome e sobrenome" required />
         </label>
 
         <label>
@@ -172,18 +123,6 @@
             <option value="Jantar">Jantar</option>
             <option value="Festa">Festa</option>
           </select>
-        </label>
-
-        <label data-album-code-field hidden>
-          Código do álbum
-          <input
-            name="accessCode"
-            type="password"
-            maxlength="32"
-            inputmode="numeric"
-            autocomplete="off"
-            placeholder="Informe o código disponível na festa"
-          />
         </label>
 
         <div class="camera-entry">
@@ -278,11 +217,6 @@
           <small>Não feche esta tela até o envio terminar.</small>
         </div>
 
-        <label class="consent-row">
-          <input name="consent" type="checkbox" required />
-          <span>Confirmo que posso compartilhar estes arquivos no álbum coletivo do casamento.</span>
-        </label>
-
         <div class="dialog-actions">
           <button class="button secondary" type="button" data-close-upload>Cancelar</button>
           <button class="button primary" type="submit" data-upload-submit>Publicar agora</button>
@@ -293,7 +227,17 @@
     <dialog class="lightbox" data-lightbox aria-label="Visualização da memória">
       <button class="dialog-close lightbox-close" type="button" aria-label="Fechar" data-close-lightbox>×</button>
       <div class="lightbox-media" data-lightbox-media></div>
-      <div class="lightbox-caption" data-lightbox-caption></div>
+      <div class="lightbox-footer">
+        <div class="lightbox-caption" data-lightbox-caption></div>
+        <div class="lightbox-actions">
+          <button class="button primary compact lightbox-download" type="button" data-download-media hidden>
+            Baixar original
+          </button>
+          <button class="button danger compact lightbox-delete" type="button" data-delete-media hidden>
+            Excluir memória
+          </button>
+        </div>
+      </div>
     </dialog>
 
     <dialog class="story-viewer" data-story-dialog aria-label="Stories do convidado">
@@ -345,6 +289,6 @@
     </nav>
 
     <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
-    <script src="/album.js?v=1" defer></script>
+    <script src="/album.js?v=20260721-7" defer></script>
   </body>
 </html>

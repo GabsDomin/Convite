@@ -1,13 +1,17 @@
-[
-  {
-    "AllowedOrigins": [
-      "https://gab-naia.online",
-      "http://127.0.0.1:3000",
-      "http://localhost:3000"
-    ],
-    "AllowedMethods": ["GET", "HEAD", "PUT"],
-    "AllowedHeaders": ["Content-Type", "Cache-Control"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
-]
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "https://gab-naia.online",
+          "http://127.0.0.1:3000",
+          "http://localhost:3000"
+        ],
+        "methods": ["GET", "HEAD", "PUT"],
+        "headers": ["Content-Type", "Cache-Control"]
+      },
+      "exposeHeaders": ["ETag"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

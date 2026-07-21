@@ -4,11 +4,12 @@ const fileInput = document.querySelector("[data-memory-files]");
 const selectedFiles = document.querySelector("[data-selected-files]");
 const uploadError = document.querySelector("[data-upload-error]");
 const memoryGrid = document.querySelector("[data-memory-grid]");
-const memoryCount = document.querySelector("[data-memory-count]");
 const galleryEmpty = document.querySelector("[data-gallery-empty]");
 const lightbox = document.querySelector("[data-lightbox]");
 const lightboxMedia = document.querySelector("[data-lightbox-media]");
 const lightboxCaption = document.querySelector("[data-lightbox-caption]");
+const lightboxDownloadButton = document.querySelector("[data-download-media]");
+const lightboxDeleteButton = document.querySelector("[data-delete-media]");
 const storiesRail = document.querySelector("[data-stories-rail]");
 const storyDialog = document.querySelector("[data-story-dialog]");
 const storyProgress = document.querySelector("[data-story-progress]");
@@ -43,46 +44,21 @@ const cameraZoomInput = document.querySelector("[data-camera-zoom-input]");
 const cameraZoomValue = document.querySelector("[data-camera-zoom-value]");
 const cameraTorchButton = document.querySelector("[data-camera-torch]");
 const cameraModeButtons = document.querySelectorAll("[data-camera-mode]");
-const albumStatus = document.querySelector("[data-album-status]");
-const albumStatusLabel = document.querySelector("[data-album-status-label]");
-const albumStatusCopy = document.querySelector("[data-album-status-copy]");
 const uploadProgress = document.querySelector("[data-upload-progress]");
 const uploadProgressLabel = document.querySelector("[data-upload-progress-label]");
 const uploadProgressValue = document.querySelector("[data-upload-progress-value]");
 const uploadProgressBar = document.querySelector("[data-upload-progress-bar]");
 const uploadSubmitButton = document.querySelector("[data-upload-submit]");
-const albumCodeField = document.querySelector("[data-album-code-field]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const activeObjectUrls = new Set();
 const capturedFiles = [];
 const maximumAlbumFileSize = 500 * 1024 * 1024;
-const storyGroups = new Map([
-  ["Gabriel", {
-    slides: [
-      { kind: "placeholder", theme: "story-theme-blue", title: "Um novo capítulo", caption: "Preparativos para o nosso grande dia" },
-      { kind: "placeholder", theme: "story-theme-light", title: "Cada detalhe", caption: "Tudo sendo preparado com carinho" },
-    ],
-  }],
-  ["Halanaia", {
-    slides: [
-      { kind: "placeholder", theme: "story-theme-light", title: "Contando os dias", caption: "28 de novembro de 2026" },
-      { kind: "placeholder", theme: "story-theme-blue", title: "Nosso sonho", caption: "Uma noite para guardar para sempre" },
-    ],
-  }],
-  ["Convidada", {
-    slides: [
-      { kind: "placeholder", theme: "story-theme-night", title: "Outro olhar", caption: "Os convidados também contam essa história" },
-    ],
-  }],
-  ["Convidado", {
-    slides: [
-      { kind: "placeholder", theme: "story-theme-blue", title: "Memórias juntos", caption: "Cada registro encontra seu lugar aqui" },
-    ],
-  }],
-]);
+const storyGroups = new Map();
 let activeFilter = "Todos";
+let albumIsAdmin = false;
+let activeLightboxMediaId = null;
 let activeStoryPerson = "";
 let activeStoryIndex = 0;
 let storyTimer;
@@ -140,8 +116,76 @@ function getInitials(name) {
     .join("") || "♡";
 }
 
+function capitalizeNamePart(part) {
+  if (!part) return "";
+  return part.charAt(0).toLocaleUpperCase("pt-BR") + part.slice(1).toLocaleLowerCase("pt-BR");
+}
+
+function parsePersonName(fullName) {
+  const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  const firstName = parts[0] || "";
+  const lastName = parts.length > 1 ? parts[parts.length - 1] : "";
+  return {
+    person: fullName,
+    firstName,
+    lastName,
+    firstKey: firstName.toLocaleLowerCase("pt-BR"),
+    lastInitial: lastName.charAt(0).toLocaleUpperCase("pt-BR") || "",
+  };
+}
+
+function buildStoryDisplayNameMap(people) {
+  const parsed = people.map(parsePersonName);
+  const byFirstName = new Map();
+
+  parsed.forEach((entry) => {
+    const group = byFirstName.get(entry.firstKey) || [];
+    group.push(entry);
+    byFirstName.set(entry.firstKey, group);
+  });
+
+  const displayNames = new Map();
+  parsed.forEach((entry) => {
+    const shortName = capitalizeNamePart(entry.firstName);
+    const group = byFirstName.get(entry.firstKey) || [entry];
+
+    if (group.length === 1) {
+      displayNames.set(entry.person, shortName);
+      return;
+    }
+
+    const sorted = [...group].sort((left, right) => (
+      left.person.localeCompare(right.person, "pt-BR", { sensitivity: "base" })
+    ));
+    const keepShortName = sorted[0].person === entry.person;
+
+    if (keepShortName || !entry.lastInitial) {
+      displayNames.set(entry.person, shortName);
+      return;
+    }
+
+    displayNames.set(entry.person, `${shortName} ${entry.lastInitial}.`);
+  });
+
+  return displayNames;
+}
+
+let storyDisplayNames = new Map();
+
+function refreshStoryDisplayNames() {
+  storyDisplayNames = buildStoryDisplayNameMap(Array.from(storyGroups.keys()));
+}
+
+function getStoryDisplayName(person) {
+  return storyDisplayNames.get(person) || person;
+}
+
 function getStoryPreview(group) {
   return group.slides.find((slide) => slide.kind === "media" && slide.type?.startsWith("image/"));
+}
+
+function storyGroupHasMedia(group) {
+  return group.slides.some((slide) => slide.kind === "media");
 }
 
 function renderAvatar(target, person, group) {
@@ -159,6 +203,7 @@ function renderAvatar(target, person, group) {
 
 function renderStories() {
   storiesRail.replaceChildren();
+  refreshStoryDisplayNames();
 
   const addWrapper = document.createElement("div");
   addWrapper.setAttribute("role", "listitem");
@@ -180,6 +225,8 @@ function renderStories() {
   storiesRail.append(addWrapper);
 
   storyGroups.forEach((group, person) => {
+    if (!storyGroupHasMedia(group)) return;
+
     const wrapper = document.createElement("div");
     wrapper.setAttribute("role", "listitem");
     const button = document.createElement("button");
@@ -192,7 +239,7 @@ function renderStories() {
     avatar.className = "story-avatar";
     renderAvatar(avatar, person, group);
     const label = document.createElement("span");
-    label.textContent = person;
+    label.textContent = getStoryDisplayName(person);
     ring.append(avatar);
     button.append(ring, label);
     button.addEventListener("click", () => openStory(person));
@@ -726,17 +773,19 @@ function handleCameraCapture() {
 }
 
 function updateGalleryVisibility() {
-  const cards = Array.from(memoryGrid.querySelectorAll("[data-memory-category]"));
+  const cards = Array.from(memoryGrid.querySelectorAll("[data-memory-category], [data-memory-categories]"));
   let visibleCount = 0;
 
   cards.forEach((card) => {
-    const visible = activeFilter === "Todos" || card.dataset.memoryCategory === activeFilter;
+    const categories = String(card.dataset.memoryCategories || card.dataset.memoryCategory || "")
+      .split("|")
+      .filter(Boolean);
+    const visible = activeFilter === "Todos" || categories.includes(activeFilter);
     card.hidden = !visible;
-    if (visible) visibleCount += 1;
+    if (visible) visibleCount += Number(card.dataset.memoryCount || 1);
   });
 
   galleryEmpty.hidden = visibleCount !== 0;
-  memoryCount.textContent = visibleCount === 1 ? "1 memória visível" : `${visibleCount} memórias visíveis`;
 }
 
 function setActiveFilter(filter) {
@@ -765,17 +814,88 @@ function openUploadDialog() {
   window.setTimeout(() => uploadForm.elements.guestName.focus(), 0);
 }
 
+let activeLightboxDownload = null;
+
 function closeLightbox() {
   if (!lightbox.open) return;
   lightbox.close();
   lightboxMedia.replaceChildren();
   lightboxCaption.replaceChildren();
+  activeLightboxDownload = null;
+  activeLightboxMediaId = null;
+  if (lightboxDownloadButton) {
+    lightboxDownloadButton.hidden = true;
+    lightboxDownloadButton.disabled = false;
+    lightboxDownloadButton.textContent = "Baixar original";
+  }
+  if (lightboxDeleteButton) {
+    lightboxDeleteButton.hidden = true;
+    lightboxDeleteButton.disabled = false;
+    lightboxDeleteButton.textContent = "Excluir memória";
+  }
 }
 
-function openLightbox({ url, type, guestName, category }) {
+function extensionForMimeType(type) {
+  if (type.includes("png")) return "png";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("avif")) return "avif";
+  if (type.includes("heic") || type.includes("heif")) return "heic";
+  if (type.includes("quicktime")) return "mov";
+  if (type.includes("webm")) return "webm";
+  if (type.includes("mp4") || type.startsWith("video/")) return "mp4";
+  return "jpg";
+}
+
+function buildDownloadFileName({ guestName, category, type }) {
+  const safeGuest = String(guestName || "memoria")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "memoria";
+  const safeCategory = String(category || "album")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "album";
+  return `${safeGuest}-${safeCategory}.${extensionForMimeType(type || "")}`;
+}
+
+async function downloadMediaFile({ url, type, guestName, category, fileName }) {
+  if (!url) throw new Error("Arquivo indisponível para download.");
+  const resolvedName = fileName || buildDownloadFileName({ guestName, category, type });
+
+  try {
+    const response = await fetch(url, { mode: "cors" });
+    if (!response.ok) throw new Error("Não foi possível baixar o arquivo.");
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = resolvedName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+    return;
+  } catch {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = resolvedName;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
+}
+
+function openLightbox({ url, type, guestName, category, originalUrl, mediaId }) {
   lightboxMedia.replaceChildren();
   lightboxCaption.replaceChildren();
 
+  const downloadUrl = originalUrl || url;
   const media = type.startsWith("video/")
     ? document.createElement("video")
     : document.createElement("img");
@@ -795,6 +915,24 @@ function openLightbox({ url, type, guestName, category }) {
 
   lightboxMedia.append(media);
   lightboxCaption.append(caption);
+  activeLightboxMediaId = mediaId || null;
+  activeLightboxDownload = {
+    url: downloadUrl,
+    type,
+    guestName,
+    category,
+    fileName: buildDownloadFileName({ guestName, category, type }),
+  };
+  if (lightboxDownloadButton) {
+    lightboxDownloadButton.hidden = !downloadUrl;
+    lightboxDownloadButton.disabled = false;
+    lightboxDownloadButton.textContent = "Baixar original";
+  }
+  if (lightboxDeleteButton) {
+    lightboxDeleteButton.hidden = !albumIsAdmin || !mediaId;
+    lightboxDeleteButton.disabled = false;
+    lightboxDeleteButton.textContent = "Excluir memória";
+  }
   lightbox.showModal();
 }
 
@@ -1045,7 +1183,7 @@ function renderActiveStory() {
   const slide = group?.slides[activeStoryIndex];
   if (!group || !slide) return closeStory();
 
-  storyName.textContent = activeStoryPerson;
+  storyName.textContent = getStoryDisplayName(activeStoryPerson);
   renderAvatar(storyAvatar, activeStoryPerson, group);
   storyStage.replaceChildren();
   storyProgress.replaceChildren();
@@ -1130,91 +1268,285 @@ async function shareActiveStory() {
 }
 
 function openStory(person) {
-  if (!storyGroups.has(person)) return;
+  const group = storyGroups.get(person);
+  if (!group || !storyGroupHasMedia(group)) return;
   activeStoryPerson = person;
   activeStoryIndex = 0;
   if (!storyDialog.open) storyDialog.showModal();
   renderActiveStory();
 }
 
-function createMemoryCard({
-  file,
-  guestName,
-  category,
-  previewUrl,
-  displayUrl,
-  originalUrl,
-  type,
-  createdAt,
-  id,
-}) {
+function resolveMemoryEntry(entry) {
   let localUrl = "";
-  if (file) {
-    localUrl = URL.createObjectURL(file);
+  if (entry.file) {
+    localUrl = URL.createObjectURL(entry.file);
     activeObjectUrls.add(localUrl);
   }
-  const resolvedType = type || file?.type || "image/jpeg";
-  const resolvedDisplayUrl = displayUrl || localUrl;
-  const resolvedPreviewUrl = previewUrl || resolvedDisplayUrl;
-  const resolvedOriginalUrl = originalUrl || resolvedDisplayUrl;
+  const resolvedType = entry.type || entry.file?.type || "image/jpeg";
+  const resolvedDisplayUrl = entry.displayUrl || localUrl;
+  const resolvedPreviewUrl = entry.previewUrl || resolvedDisplayUrl;
+  const resolvedOriginalUrl = entry.originalUrl || resolvedDisplayUrl;
+  return {
+    ...entry,
+    resolvedType,
+    resolvedDisplayUrl,
+    resolvedPreviewUrl,
+    resolvedOriginalUrl,
+    isVideo: resolvedType.startsWith("video/"),
+  };
+}
 
-  const card = document.createElement("article");
-  card.className = "memory-card";
-  card.dataset.memoryCategory = category;
-  if (id) card.dataset.memoryId = id;
+function openMemoryLightbox(entry) {
+  openLightbox({
+    url: entry.resolvedDisplayUrl,
+    originalUrl: entry.resolvedOriginalUrl,
+    type: entry.resolvedType,
+    guestName: entry.guestName,
+    category: entry.category,
+    mediaId: entry.id,
+  });
+}
 
-  const mediaButton = document.createElement("button");
-  mediaButton.className = "memory-media-button";
-  mediaButton.type = "button";
-  mediaButton.setAttribute("aria-label", `Abrir memória compartilhada por ${guestName}`);
-
-  const isVideo = resolvedType.startsWith("video/");
-  const media = isVideo && !previewUrl ? document.createElement("video") : document.createElement("img");
-  media.src = resolvedPreviewUrl;
+function createMediaElement(entry) {
+  const media = entry.isVideo && !entry.previewUrl
+    ? document.createElement("video")
+    : document.createElement("img");
+  media.src = entry.resolvedPreviewUrl;
   if (media instanceof HTMLVideoElement) {
     media.muted = true;
     media.playsInline = true;
     media.preload = "metadata";
   } else {
-    media.alt = `Memória compartilhada por ${guestName}`;
+    media.alt = `Memória compartilhada por ${entry.guestName}`;
+    media.loading = "lazy";
   }
-  mediaButton.append(media);
-  if (isVideo) {
+  return media;
+}
+
+function createMemoryCard(rawEntry, variant = "default") {
+  const entry = resolveMemoryEntry(rawEntry);
+  const card = document.createElement("article");
+  card.className = "memory-card";
+  if (variant === "tall") card.classList.add("memory-card-tall");
+  if (variant === "wide" || entry.isVideo) card.classList.add("memory-card-wide");
+  if (entry.isVideo) card.classList.add("memory-card-video");
+  card.dataset.memoryCategory = entry.category;
+  card.dataset.memoryCount = "1";
+  if (entry.id) card.dataset.memoryId = entry.id;
+
+  const mediaButton = document.createElement("button");
+  mediaButton.className = "memory-media-button";
+  mediaButton.type = "button";
+  mediaButton.setAttribute("aria-label", `Abrir memória de ${entry.guestName}`);
+  mediaButton.append(createMediaElement(entry));
+  if (entry.isVideo) {
     const badge = document.createElement("span");
     badge.className = "video-badge";
-    badge.textContent = "▶ Vídeo";
+    badge.textContent = "▶";
     mediaButton.append(badge);
   }
+  mediaButton.addEventListener("click", () => openMemoryLightbox(entry));
+  card.append(mediaButton);
 
-  mediaButton.addEventListener("click", () => {
-    openLightbox({ url: resolvedDisplayUrl, type: resolvedType, guestName, category });
-  });
-
-  const caption = document.createElement("div");
-  caption.className = "memory-caption";
-  const categoryLabel = document.createElement("span");
-  categoryLabel.textContent = category;
-  const title = document.createElement("strong");
-  title.textContent = isVideo ? "Vídeo compartilhado" : "Foto compartilhada";
-  const author = document.createElement("small");
-  const dateLabel = createdAt
-    ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(createdAt))
-    : "agora";
-  author.textContent = `Por ${guestName} · ${dateLabel}`;
-  caption.append(categoryLabel, title, author);
-
-  card.append(mediaButton, caption);
   return {
     card,
     slide: {
       kind: "media",
-      url: resolvedDisplayUrl,
-      originalUrl: resolvedOriginalUrl,
-      type: resolvedType,
-      file,
-      caption: `${category} · compartilhado por ${guestName}`,
+      url: entry.resolvedDisplayUrl,
+      originalUrl: entry.resolvedOriginalUrl,
+      type: entry.resolvedType,
+      file: entry.file,
+      caption: `${entry.category} · compartilhado por ${entry.guestName}`,
     },
+    entry,
   };
+}
+
+function createCarouselCard(rawEntries) {
+  const entries = rawEntries.map(resolveMemoryEntry);
+  const card = document.createElement("article");
+  card.className = "memory-card memory-card-carousel memory-card-wide";
+  card.dataset.memoryCategories = entries.map((entry) => entry.category).join("|");
+  card.dataset.memoryCategory = entries[0]?.category || "";
+  card.dataset.memoryCount = String(entries.length);
+
+  const viewport = document.createElement("div");
+  viewport.className = "memory-carousel";
+  viewport.setAttribute("role", "group");
+  viewport.setAttribute("aria-label", "Carrossel de memórias");
+
+  const track = document.createElement("div");
+  track.className = "memory-carousel-track";
+
+  entries.forEach((entry, index) => {
+    const slide = document.createElement("button");
+    slide.className = "memory-carousel-slide";
+    slide.type = "button";
+    slide.hidden = index !== 0;
+    slide.setAttribute("aria-label", `Abrir memória ${index + 1} de ${entries.length}`);
+    slide.append(createMediaElement(entry));
+    slide.addEventListener("click", () => openMemoryLightbox(entry));
+    track.append(slide);
+  });
+
+  const dots = document.createElement("div");
+  dots.className = "memory-carousel-dots";
+  dots.setAttribute("role", "tablist");
+  dots.setAttribute("aria-label", "Slides do carrossel");
+
+  let activeIndex = 0;
+  const slides = Array.from(track.children);
+  let autoplayTimer;
+  let carouselVisible = true;
+
+  function clearAutoplay() {
+    window.clearInterval(autoplayTimer);
+    autoplayTimer = undefined;
+  }
+
+  function startAutoplay() {
+    clearAutoplay();
+    if (reducedMotion.matches || slides.length < 2 || !carouselVisible) return;
+    autoplayTimer = window.setInterval(() => {
+      showSlide(activeIndex + 1);
+    }, 4500);
+  }
+
+  function showSlide(nextIndex) {
+    activeIndex = (nextIndex + slides.length) % slides.length;
+    slides.forEach((slide, index) => {
+      slide.hidden = index !== activeIndex;
+    });
+    Array.from(dots.children).forEach((dot, index) => {
+      dot.setAttribute("aria-selected", String(index === activeIndex));
+    });
+  }
+
+  entries.forEach((_, index) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "memory-carousel-dot";
+    dot.setAttribute("role", "tab");
+    dot.setAttribute("aria-label", `Ir para memória ${index + 1}`);
+    dot.setAttribute("aria-selected", String(index === 0));
+    dot.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showSlide(index);
+      startAutoplay();
+    });
+    dots.append(dot);
+  });
+
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.className = "memory-carousel-nav memory-carousel-prev";
+  previous.setAttribute("aria-label", "Memória anterior");
+  previous.textContent = "‹";
+  previous.addEventListener("click", (event) => {
+    event.stopPropagation();
+    showSlide(activeIndex - 1);
+    startAutoplay();
+  });
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "memory-carousel-nav memory-carousel-next";
+  next.setAttribute("aria-label", "Próxima memória");
+  next.textContent = "›";
+  next.addEventListener("click", (event) => {
+    event.stopPropagation();
+    showSlide(activeIndex + 1);
+    startAutoplay();
+  });
+
+  let touchStartX = 0;
+  viewport.addEventListener("touchstart", (event) => {
+    touchStartX = event.changedTouches[0]?.clientX || 0;
+    clearAutoplay();
+  }, { passive: true });
+  viewport.addEventListener("touchend", (event) => {
+    const delta = (event.changedTouches[0]?.clientX || 0) - touchStartX;
+    if (Math.abs(delta) >= 40) showSlide(activeIndex + (delta < 0 ? 1 : -1));
+    startAutoplay();
+  }, { passive: true });
+
+  viewport.addEventListener("mouseenter", clearAutoplay);
+  viewport.addEventListener("mouseleave", startAutoplay);
+  viewport.addEventListener("focusin", clearAutoplay);
+  viewport.addEventListener("focusout", startAutoplay);
+
+  if (typeof IntersectionObserver !== "undefined") {
+    const observer = new IntersectionObserver((entries) => {
+      carouselVisible = entries.some((entry) => entry.isIntersecting);
+      if (carouselVisible) startAutoplay();
+      else clearAutoplay();
+    }, { threshold: 0.35 });
+    observer.observe(card);
+  }
+
+  startAutoplay();
+
+  viewport.append(track, previous, next, dots);
+  card.append(viewport);
+
+  return {
+    card,
+    slides: entries.map((entry) => ({
+      kind: "media",
+      url: entry.resolvedDisplayUrl,
+      originalUrl: entry.resolvedOriginalUrl,
+      type: entry.resolvedType,
+      file: entry.file,
+      caption: `${entry.category} · compartilhado por ${entry.guestName}`,
+      guestName: entry.guestName,
+    })),
+    entries,
+  };
+}
+
+const MAX_CAROUSEL_PHOTOS = 4;
+
+function buildGalleryTiles(entries) {
+  const tiles = [];
+  let index = 0;
+  let step = 0;
+  const pattern = ["carousel4", "single", "tall", "carousel2", "wide", "single", "tall", "single"];
+
+  while (index < entries.length) {
+    const kind = pattern[step % pattern.length];
+    step += 1;
+    const current = entries[index];
+    const currentIsVideo = String(current.type || current.file?.type || "").startsWith("video/");
+
+    if (kind.startsWith("carousel") && !currentIsVideo) {
+      const requestedSize = kind === "carousel4" ? 4 : 2;
+      const size = Math.min(requestedSize, MAX_CAROUSEL_PHOTOS);
+      const bundle = [];
+      while (bundle.length < size && index < entries.length) {
+        const candidate = entries[index];
+        if (String(candidate.type || candidate.file?.type || "").startsWith("video/")) break;
+        bundle.push(candidate);
+        index += 1;
+      }
+      if (bundle.length >= 2) {
+        tiles.push({ kind: "carousel", entries: bundle });
+        continue;
+      }
+      if (bundle.length === 1) {
+        tiles.push({ kind: "single", entry: bundle[0], variant: "default" });
+        continue;
+      }
+    }
+
+    tiles.push({
+      kind: "single",
+      entry: current,
+      variant: currentIsVideo || kind === "wide" ? "wide" : kind === "tall" ? "tall" : "default",
+    });
+    index += 1;
+  }
+
+  return tiles;
 }
 
 function addMemoriesToGallery(entries, { prepend = true } = {}) {
@@ -1222,14 +1554,27 @@ function addMemoriesToGallery(entries, { prepend = true } = {}) {
   memoryGrid.querySelectorAll("[data-demo-memory]").forEach((card) => card.remove());
   const fragment = document.createDocumentFragment();
   const groupedSlides = new Map();
+  const tiles = buildGalleryTiles(entries);
 
-  entries.forEach((entry) => {
-    const memory = createMemoryCard(entry);
+  tiles.forEach((tile) => {
+    if (tile.kind === "carousel") {
+      const carousel = createCarouselCard(tile.entries);
+      fragment.append(carousel.card);
+      carousel.entries.forEach((entry, index) => {
+        const slides = groupedSlides.get(entry.guestName) || [];
+        slides.push(carousel.slides[index]);
+        groupedSlides.set(entry.guestName, slides);
+      });
+      return;
+    }
+
+    const memory = createMemoryCard(tile.entry, tile.variant);
     fragment.append(memory.card);
-    const slides = groupedSlides.get(entry.guestName) || [];
+    const slides = groupedSlides.get(tile.entry.guestName) || [];
     slides.push(memory.slide);
-    groupedSlides.set(entry.guestName, slides);
+    groupedSlides.set(tile.entry.guestName, slides);
   });
+
   if (prepend) memoryGrid.prepend(fragment);
   else memoryGrid.append(fragment);
 
@@ -1249,27 +1594,11 @@ async function requestAlbumJson(url, options = {}) {
   return payload;
 }
 
-function showLocalAlbumStatus(message = "O armazenamento online ainda não foi conectado. Os envios desta tela ficam somente neste navegador.") {
-  albumStorageConfigured = false;
-  albumStatusLabel.textContent = "Modo de demonstração";
-  albumStatusCopy.textContent = message;
-}
-
-async function initializeAlbumStorage() {
-  try {
-    const payload = await requestAlbumJson("/api/album/media");
-    albumCodeField.hidden = !payload.uploadCodeRequired;
-    albumCodeField.querySelector("input").required = Boolean(payload.uploadCodeRequired);
-    if (!payload.configured) {
-      showLocalAlbumStatus();
-      return;
-    }
-
-    albumStorageConfigured = true;
-    albumStatusLabel.textContent = "Memórias protegidas";
-    albumStatusCopy.textContent = "Fotos e vídeos aparecem para todos e recebem backup automático dos originais.";
-    albumStatus.classList.add("is-online");
-    memoryGrid.querySelectorAll("[data-demo-memory]").forEach((card) => card.remove());
+async function reloadAlbumGallery() {
+  const payload = await requestAlbumJson("/api/album/media");
+  memoryGrid.replaceChildren();
+  storyGroups.clear();
+  if (payload.configured && payload.media?.length) {
     const entries = payload.media.map((media) => ({
       id: media.id,
       guestName: media.guestName,
@@ -1281,9 +1610,59 @@ async function initializeAlbumStorage() {
       createdAt: media.createdAt,
     }));
     addMemoriesToGallery(entries, { prepend: false });
+  }
+  updateGalleryVisibility();
+  renderStories();
+}
+
+async function deleteActiveMedia() {
+  if (!albumIsAdmin || !activeLightboxMediaId) return;
+  if (!window.confirm("Excluir esta memória do álbum? Essa ação não pode ser desfeita.")) return;
+
+  lightboxDeleteButton.disabled = true;
+  lightboxDeleteButton.textContent = "Excluindo...";
+
+  try {
+    await requestAlbumJson(`/api/album/media/${activeLightboxMediaId}`, { method: "DELETE" });
+    closeLightbox();
+    await reloadAlbumGallery();
+    showToast("Memória excluída do álbum.");
+  } catch (error) {
+    showToast(error.message || "Não foi possível excluir esta memória.");
+    lightboxDeleteButton.disabled = false;
+    lightboxDeleteButton.textContent = "Excluir memória";
+  }
+}
+
+function showLocalAlbumStatus() {
+  albumStorageConfigured = false;
+}
+
+async function initializeAlbumStorage() {
+  try {
+    const payload = await requestAlbumJson("/api/album/media");
+    if (!payload.configured) {
+      showLocalAlbumStatus();
+      return;
+    }
+
+    albumStorageConfigured = true;
+    memoryGrid.querySelectorAll("[data-demo-memory]").forEach((card) => card.remove());
+    const entries = payload.media.map((media) => ({
+      id: media.id,
+      guestName: media.guestName,
+      category: media.category,
+      previewUrl: media.thumbnailUrl,
+      displayUrl: media.displayUrl,
+      originalUrl: media.originalUrl,
+      type: media.mimeType,
+      createdAt: media.createdAt,
+    }));
+    storyGroups.clear();
+    addMemoriesToGallery(entries, { prepend: false });
     updateGalleryVisibility();
   } catch {
-    showLocalAlbumStatus("A conexão com o armazenamento não terminou. Você pode testar a interface, mas o envio ainda ficará neste navegador.");
+    showLocalAlbumStatus();
   }
 }
 
@@ -1311,14 +1690,13 @@ function uploadFileToR2(file, upload, onProgress) {
   });
 }
 
-async function persistAlbumFile(file, guestName, category, accessCode, onProgress) {
+async function persistAlbumFile(file, guestName, category, onProgress) {
   const upload = await requestAlbumJson("/api/album/upload-signature", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       guestName,
       category,
-      accessCode,
       fileName: file.name,
       fileType: file.type,
       fileSize: file.size,
@@ -1355,6 +1733,23 @@ document.querySelectorAll("[data-close-upload]").forEach((button) => {
 
 document.querySelectorAll("[data-close-lightbox]").forEach((button) => {
   button.addEventListener("click", closeLightbox);
+});
+
+lightboxDeleteButton?.addEventListener("click", deleteActiveMedia);
+
+lightboxDownloadButton?.addEventListener("click", async () => {
+  if (!activeLightboxDownload || !lightboxDownloadButton) return;
+  lightboxDownloadButton.disabled = true;
+  lightboxDownloadButton.textContent = "Baixando...";
+  try {
+    await downloadMediaFile(activeLightboxDownload);
+    lightboxDownloadButton.textContent = "Baixar original";
+  } catch (error) {
+    lightboxDownloadButton.textContent = "Tentar de novo";
+    showToast(error.message || "Não foi possível baixar a mídia.");
+  } finally {
+    lightboxDownloadButton.disabled = false;
+  }
 });
 
 document.querySelector("[data-close-story]").addEventListener("click", closeStory);
@@ -1428,9 +1823,13 @@ uploadForm.addEventListener("submit", async (event) => {
   const formData = new FormData(uploadForm);
   const guestName = String(formData.get("guestName") || "").trim();
   const category = String(formData.get("category") || "");
-  const accessCode = String(formData.get("accessCode") || "").trim();
   if (guestName.length < 2) {
     showUploadError("Informe seu nome para publicar as memórias.");
+    return;
+  }
+  const nameParts = guestName.split(/\s+/).filter(Boolean);
+  if (nameParts.length < 2 || nameParts.some((part) => part.length < 2)) {
+    showUploadError("Informe nome e sobrenome para publicar as memórias.");
     return;
   }
 
@@ -1442,7 +1841,7 @@ uploadForm.addEventListener("submit", async (event) => {
     try {
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
-        const entry = await persistAlbumFile(file, guestName, category, accessCode, (fileProgress) => {
+        const entry = await persistAlbumFile(file, guestName, category, (fileProgress) => {
           const overallProgress = ((index + fileProgress) / files.length) * 100;
           setUploadProgress(overallProgress, `Enviando ${index + 1} de ${files.length}...`);
         });
@@ -1504,4 +1903,31 @@ window.addEventListener("beforeunload", () => {
 renderStories();
 updateGalleryVisibility();
 scheduleHeroRotation();
-initializeAlbumStorage();
+
+async function ensureAlbumSession() {
+  const logoutButton = document.querySelector("[data-album-logout]");
+  try {
+    const response = await fetch("/api/album/session", { credentials: "same-origin" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.authenticated) {
+      window.location.replace("/album/login");
+      return false;
+    }
+    albumIsAdmin = Boolean(payload.isAlbumAdmin);
+    if (logoutButton) {
+      logoutButton.hidden = false;
+      logoutButton.addEventListener("click", async () => {
+        await fetch("/api/album/logout", { method: "POST", credentials: "same-origin" });
+        window.location.replace("/album/login");
+      });
+    }
+    return true;
+  } catch {
+    window.location.replace("/album/login");
+    return false;
+  }
+}
+
+ensureAlbumSession().then((ok) => {
+  if (ok) initializeAlbumStorage();
+});

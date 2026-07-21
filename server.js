@@ -3,7 +3,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -65,7 +65,15 @@ const albumImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image
 const albumVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const albumR2KeyPrefix = "gab-naia/album/originals/";
 const albumUploadUrlTtlSeconds = 30 * 60;
+const albumSessionCookieName = "gab_naia_album_session";
+const albumSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 const albumMediaSelect = "id,guest_name,category,storage_provider,storage_key,public_id,resource_type,mime_type,format,version,bytes,width,height,duration,backup_status,created_at";
+const albumAdminGuestNames = new Set(
+  (firstEnv("ALBUM_ADMIN_GUEST_NAMES") || "Gabriel Domingues")
+    .split(",")
+    .map((name) => name.trim().replace(/\s+/g, " ").toLowerCase())
+    .filter(Boolean),
+);
 const albumFileExtensions = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -112,6 +120,8 @@ const scriptDocument = { content: readFileSync(new URL("./script.js", import.met
 const albumDocument = { content: readFileSync(new URL("./album.html", import.meta.url)), extension: ".html" };
 const albumStylesDocument = { content: readFileSync(new URL("./album.css", import.meta.url)), extension: ".css" };
 const albumScriptDocument = { content: readFileSync(new URL("./album.js", import.meta.url)), extension: ".js" };
+const albumLoginDocument = { content: readFileSync(new URL("./album-login.html", import.meta.url)), extension: ".html" };
+const albumLoginScriptDocument = { content: readFileSync(new URL("./album-login.js", import.meta.url)), extension: ".js" };
 const paymentSuccessDocument = {
   content: readFileSync(new URL("./pagamento/sucesso/index.html", import.meta.url)),
   extension: ".html",
@@ -134,6 +144,10 @@ const publicFiles = new Map([
   ["/album.html", albumDocument],
   ["/album.css", albumStylesDocument],
   ["/album.js", albumScriptDocument],
+  ["/album/login", albumLoginDocument],
+  ["/album/login/", albumLoginDocument],
+  ["/album-login.html", albumLoginDocument],
+  ["/album-login.js", albumLoginScriptDocument],
   ["/pagamento/sucesso", paymentSuccessDocument],
   ["/pagamento/sucesso/", paymentSuccessDocument],
   ["/pagamento/erro", paymentErrorDocument],
@@ -293,6 +307,15 @@ function requireText(value, label, { min = 1, max = 120 } = {}) {
   return text;
 }
 
+function requireFullGuestName(value, label = "Nome") {
+  const text = requireText(value, label, { min: 3, max: 120 });
+  const parts = text.split(" ").filter(Boolean);
+  if (parts.length < 2 || parts.some((part) => part.length < 2)) {
+    throw new HttpError(400, `${label} deve incluir nome e sobrenome.`);
+  }
+  return text;
+}
+
 function normalizeGuestName(value) {
   return String(value || "")
     .normalize("NFD")
@@ -310,7 +333,7 @@ function validateAdditionalGuestNames(value, partySize, primaryGuestName) {
     throw new HttpError(400, "É possível incluir no máximo seis menores.");
   }
 
-  const names = value.map((name) => requireText(name, "Nome da pessoa", { min: 2, max: 120 }));
+  const names = value.map((name) => requireFullGuestName(name, "Nome da pessoa"));
   const normalizedPrimaryName = normalizeGuestName(primaryGuestName);
   const normalizedNames = names.map(normalizeGuestName);
 
@@ -324,11 +347,11 @@ function validateAdditionalGuestNames(value, partySize, primaryGuestName) {
   if (partySize === "Somente eu" && names.length !== 0) {
     throw new HttpError(400, "A confirmação individual não deve incluir outros nomes.");
   }
-  if (partySize === "Casal" && names.length !== 1) {
+  if (partySize === "Casal" && (names.length < 1 || names.length > 7)) {
     throw new HttpError(400, "Informe o nome do seu companheiro ou companheira.");
   }
   if (partySize === "Responsável e menores" && (names.length < 1 || names.length > 6)) {
-    throw new HttpError(400, "Informe o nome de cada menor sob sua responsabilidade.");
+    throw new HttpError(400, "Informe o nome de cada filho.");
   }
 
   return names;
@@ -380,6 +403,100 @@ function requireAlbumAccessCode(value) {
   if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
     throw new HttpError(403, "Código do álbum incorreto.");
   }
+}
+
+function parseCookies(request) {
+  const cookies = {};
+  for (const part of String(request.headers.cookie || "").split(";")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0) continue;
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    if (!name) continue;
+    try {
+      cookies[name] = decodeURIComponent(value);
+    } catch {
+      cookies[name] = value;
+    }
+  }
+  return cookies;
+}
+
+function createAlbumSessionToken(guestName) {
+  if (albumUploadSigningSecret.length < 32) {
+    throw new HttpError(503, "Sessão do álbum indisponível.");
+  }
+  const payload = {
+    guestName: requireText(guestName, "Nome", { min: 2, max: 120 }),
+    expiresAt: Date.now() + albumSessionTtlMs,
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", albumUploadSigningSecret).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+function readAlbumSession(request) {
+  if (albumUploadSigningSecret.length < 32) return null;
+  const token = parseCookies(request)[albumSessionCookieName];
+  if (!token) return null;
+  const [encodedPayload, signature] = String(token).split(".");
+  if (!encodedPayload || !signature) return null;
+
+  const expectedSignature = createHmac("sha256", albumUploadSigningSecret).update(encodedPayload).digest("base64url");
+  const receivedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (receivedBuffer.length !== expectedBuffer.length || !timingSafeEqual(receivedBuffer, expectedBuffer)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    if (!Number.isSafeInteger(payload.expiresAt) || payload.expiresAt < Date.now()) return null;
+    return {
+      guestName: requireText(payload.guestName, "Nome", { min: 2, max: 120 }),
+      expiresAt: payload.expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function requireAlbumSession(request) {
+  const session = readAlbumSession(request);
+  if (!session) {
+    throw new HttpError(401, "Entre no álbum com seu nome e senha para continuar.");
+  }
+  return session;
+}
+
+function normalizeAlbumGuestName(name) {
+  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isAlbumAdmin(guestName) {
+  return albumAdminGuestNames.has(normalizeAlbumGuestName(guestName));
+}
+
+function requireAlbumAdmin(session) {
+  if (!isAlbumAdmin(session.guestName)) {
+    throw new HttpError(403, "Somente o administrador do álbum pode excluir memórias.");
+  }
+}
+
+function requireAlbumMediaId(value) {
+  const id = String(value || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw new HttpError(400, "Identificador de mídia inválido.");
+  }
+  return id;
+}
+
+function albumSessionCookieHeader(token, { clear = false } = {}) {
+  if (clear) {
+    return `${albumSessionCookieName}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
+  }
+  const secureFlag = siteUrl.startsWith("https://") || process.env.VERCEL ? "; Secure" : "";
+  return `${albumSessionCookieName}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.floor(albumSessionTtlMs / 1000)}; HttpOnly; SameSite=Lax${secureFlag}`;
 }
 
 function requireAlbumFile(value) {
@@ -600,7 +717,12 @@ async function callSupabaseRpc(functionName, payload = {}) {
   const data = responseText ? JSON.parse(responseText) : null;
 
   if (!supabaseResponse.ok) {
-    const message = data?.message || data?.error_description || data?.hint || "Erro ao chamar o Supabase.";
+    const message = data?.message
+      || data?.error_description
+      || data?.hint
+      || data?.error
+      || (typeof data === "string" ? data : null)
+      || "Erro ao chamar o Supabase.";
     throw new Error(message);
   }
 
@@ -643,6 +765,35 @@ async function insertSupabaseTable(path, payload) {
   }
 
   return data;
+}
+
+async function deleteSupabaseTable(path) {
+  const endpoint = new URL(`/rest/v1/${path}`, supabaseUrl);
+  const supabaseResponse = await fetch(endpoint, {
+    method: "DELETE",
+    headers: {
+      "Prefer": "return=representation",
+      ...getSupabaseHeaders(),
+    },
+  });
+  const responseText = await supabaseResponse.text();
+  const data = responseText ? JSON.parse(responseText) : null;
+
+  if (!supabaseResponse.ok) {
+    const message = data?.message || data?.error_description || data?.hint || "Erro ao excluir no Supabase.";
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+async function deleteAlbumMediaRecord(mediaId) {
+  const rows = await deleteSupabaseTable(`album_media?id=eq.${encodeURIComponent(mediaId)}`);
+  const deleted = Array.isArray(rows) ? rows[0] : rows;
+  if (!deleted?.id) {
+    throw new HttpError(404, "Memória não encontrada.");
+  }
+  return deleted;
 }
 
 function normalizeImageUrl(value) {
@@ -841,8 +992,70 @@ async function handleApi(request, response, pathname) {
   }
 
   try {
+    if (request.method === "GET" && pathname === "/api/album/session") {
+      const session = readAlbumSession(request);
+      sendJson(response, 200, {
+        authenticated: Boolean(session),
+        guestName: session?.guestName || null,
+        isAlbumAdmin: Boolean(session && isAlbumAdmin(session.guestName)),
+      });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/album/login") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-login", 20, 10 * 60_000);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Confirmações ainda não estão disponíveis.");
+      if (albumUploadSigningSecret.length < 32) throw new HttpError(503, "Sessão do álbum indisponível.");
+      const body = await readJsonBody(request);
+      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 120 });
+      const password = String(body.password ?? "");
+      if (!password) throw new HttpError(400, "Senha obrigatória.");
+
+      let rows;
+      try {
+        rows = await callSupabaseRpc("authenticate_album_guest", {
+          p_guest_name: guestName,
+          p_password: password,
+        });
+      } catch (error) {
+        const message = String(error.message || "");
+        if (/senha do álbum ainda não foi configurada/i.test(message)) {
+          throw new HttpError(503, "Senha do álbum ainda não foi configurada no banco.");
+        }
+        if (/senha incorreta/i.test(message)) throw new HttpError(403, "Senha incorreta.");
+        if (/não encontrado|nome obrigatório/i.test(message)) {
+          throw new HttpError(403, "Nome não encontrado nas confirmações de presença. Use exatamente o nome da confirmação.");
+        }
+        throw new HttpError(403, message || "Não foi possível entrar no álbum.");
+      }
+
+      const row = Array.isArray(rows) ? rows[0] : rows;
+      if (!row?.guest_name) {
+        throw new HttpError(403, "Não foi possível autenticar no álbum.");
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        guestName: row.guest_name,
+        isAlbumAdmin: isAlbumAdmin(row.guest_name),
+      }, {
+        "Set-Cookie": albumSessionCookieHeader(createAlbumSessionToken(row.guest_name)),
+      });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/album/logout") {
+      validateSameOriginRequest(request);
+      sendJson(response, 200, { ok: true }, {
+        "Set-Cookie": albumSessionCookieHeader("", { clear: true }),
+      });
+      return true;
+    }
+
     if (request.method === "GET" && pathname === "/api/album/media") {
       enforceRateLimit(request, "album-media", 120, 60_000);
+      requireAlbumSession(request);
       if (!hasAlbumConfig) {
         sendJson(response, 200, {
           configured: false,
@@ -864,13 +1077,47 @@ async function handleApi(request, response, pathname) {
       return true;
     }
 
+    const albumMediaDeleteMatch = pathname.match(/^\/api\/album\/media\/([0-9a-f-]{36})$/i);
+    if (request.method === "DELETE" && albumMediaDeleteMatch) {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-delete", 30, 10 * 60_000);
+      const session = requireAlbumSession(request);
+      requireAlbumAdmin(session);
+      if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
+
+      const mediaId = requireAlbumMediaId(albumMediaDeleteMatch[1]);
+      const rows = await readSupabaseTable(
+        `album_media?select=id,storage_provider,storage_key&id=eq.${encodeURIComponent(mediaId)}&limit=1`,
+      );
+      const media = Array.isArray(rows) ? rows[0] : rows;
+      if (!media?.id) throw new HttpError(404, "Memória não encontrada.");
+
+      if (media.storage_provider === "r2" && media.storage_key) {
+        try {
+          await r2Client.send(new DeleteObjectCommand({
+            Bucket: r2BucketName,
+            Key: media.storage_key,
+          }));
+        } catch (error) {
+          if (error?.$metadata?.httpStatusCode !== 404 && error?.name !== "NotFound") {
+            throw error;
+          }
+        }
+      }
+
+      await deleteAlbumMediaRecord(mediaId);
+      sendJson(response, 200, { ok: true, id: mediaId });
+      return true;
+    }
+
     if (request.method === "POST" && pathname === "/api/album/upload-signature") {
       validateSameOriginRequest(request);
       enforceRateLimit(request, "album-signature", 600, 10 * 60_000);
+      requireAlbumSession(request);
       if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
       const body = await readJsonBody(request);
       requireAlbumAccessCode(body.accessCode);
-      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 80 });
+      const guestName = requireFullGuestName(body.guestName, "Nome");
       const category = requireAlbumCategory(body.category);
       const file = requireAlbumFile(body);
       const storageKey = `${albumR2KeyPrefix}${randomUUID()}.${albumFileExtensions.get(file.fileType)}`;
@@ -909,6 +1156,7 @@ async function handleApi(request, response, pathname) {
     if (request.method === "POST" && pathname === "/api/album/media") {
       validateSameOriginRequest(request);
       enforceRateLimit(request, "album-register", 600, 10 * 60_000);
+      requireAlbumSession(request);
       if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
       const body = await readJsonBody(request);
       const upload = await requireR2UploadResult(body);
@@ -956,7 +1204,7 @@ async function handleApi(request, response, pathname) {
       validateSameOriginRequest(request);
       enforceRateLimit(request, "rsvp", 20, 10 * 60_000);
       const body = await readJsonBody(request);
-      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 120 });
+      const guestName = requireFullGuestName(body.guestName, "Nome");
       const partySize = String(body.partySize ?? "").trim();
       if (!["Somente eu", "Casal", "Responsável e menores"].includes(partySize)) {
         throw new HttpError(400, "Tipo de confirmação inválido.");
@@ -972,7 +1220,11 @@ async function handleApi(request, response, pathname) {
         p_party_size: partySize,
         p_additional_guest_names: additionalGuestNames,
       });
-      sendJson(response, 200, { rsvp: rsvp?.[0] });
+      const row = rsvp?.[0];
+      sendJson(response, 200, {
+        rsvp: row,
+        alreadyConfirmed: Boolean(row?.already_confirmed),
+      });
       return true;
     }
 
@@ -982,7 +1234,7 @@ async function handleApi(request, response, pathname) {
       const body = await readJsonBody(request);
       const reservation = await callSupabaseRpc("reserve_gift", {
         p_gift_id: requireGiftId(body.giftId),
-        p_guest_name: requireText(body.guestName, "Nome", { min: 2, max: 120 }),
+        p_guest_name: requireFullGuestName(body.guestName, "Nome"),
         p_amount: body.amount == null ? null : requireAmount(body.amount),
       });
       sendJson(response, 200, { reservation: reservation?.[0] });
@@ -999,7 +1251,7 @@ async function handleApi(request, response, pathname) {
       const body = await readJsonBody(request);
       const order = await callSupabaseRpc("create_mercadopago_order", {
         p_gift_id: requireGiftId(body.giftId),
-        p_buyer_name: requireText(body.buyerName, "Nome", { min: 2, max: 120 }),
+        p_buyer_name: requireFullGuestName(body.buyerName, "Nome"),
         p_buyer_email: optionalEmail(body.buyerEmail),
         p_message: optionalText(body.message, "Mensagem", 500),
         p_amount: requireAmount(body.amount),
@@ -1087,6 +1339,21 @@ const server = createServer(async (request, response) => {
       "Allow": "GET, HEAD",
     }));
     response.end("Método não permitido");
+    return;
+  }
+
+  const albumPagePaths = new Set(["/album", "/album/", "/album.html"]);
+  const albumLoginPaths = new Set(["/album/login", "/album/login/", "/album-login.html"]);
+
+  if (albumPagePaths.has(pathname) && !readAlbumSession(request)) {
+    response.writeHead(302, responseHeaders({ Location: "/album/login", "Cache-Control": "no-store" }));
+    response.end();
+    return;
+  }
+
+  if (albumLoginPaths.has(pathname) && readAlbumSession(request)) {
+    response.writeHead(302, responseHeaders({ Location: "/album", "Cache-Control": "no-store" }));
+    response.end();
     return;
   }
 
