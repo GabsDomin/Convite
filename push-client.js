@@ -222,9 +222,18 @@
         text.textContent = "Depois disso, os avisos do casamento chegam no seu iPhone.";
         const steps = document.createElement("ol");
         steps.className = "push-banner-steps";
+        // Cada navegador do iPhone guarda o "Compartilhar" num lugar diferente.
+        const userAgent = navigator.userAgent;
+        const shareStep = /CriOS/.test(userAgent)
+          ? `Toque em ${shareIcon} <b>Compartilhar</b>, ao lado do endereço, no alto da tela do Chrome.`
+          : /EdgiOS/.test(userAgent)
+            ? `Toque no menu <b>⋯</b> do Edge e depois em ${shareIcon} <b>Compartilhar</b>.`
+            : /FxiOS/.test(userAgent)
+              ? `Toque no menu <b>☰</b> do Firefox e depois em ${shareIcon} <b>Compartilhar</b>.`
+              : `Toque em ${shareIcon} <b>Compartilhar</b>, na barra do Safari.`;
         steps.innerHTML = `
-          <li><span>Toque em ${shareIcon} <b>Compartilhar</b>, na barra do Safari.</span></li>
-          <li><span>Escolha ${addIcon} <b>Adicionar à Tela de Início</b> e toque em <b>Adicionar</b>.</span></li>
+          <li><span>${shareStep}</span></li>
+          <li><span>Role e escolha ${addIcon} <b>Adicionar à Tela de Início</b>. Depois toque em <b>Adicionar</b>.</span></li>
           <li><span>Abra o convite pelo <b>ícone novo</b> e toque em <b>Ativar avisos</b>.</span></li>`;
         banner.insertBefore(steps, actions);
         install.remove();
