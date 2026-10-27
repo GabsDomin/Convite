@@ -2516,22 +2516,48 @@ dialog::backdrop {
 }
 
 .challenges-score {
+  display: grid;
   flex: 0 0 auto;
+  justify-items: end;
+  gap: 0.15rem;
+  min-width: 170px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.55rem 0.85rem;
+  border-radius: 14px;
+  padding: 0.65rem 0.95rem;
   color: var(--royal-dark);
   background: white;
+  box-shadow: 0 8px 22px rgba(0, 47, 115, 0.06);
   font-size: 0.78rem;
   text-align: right;
+}
+
+.challenges-score[hidden] {
+  display: none;
+}
+
+.challenges-score-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .challenges-score strong {
   display: block;
   color: var(--royal);
   font-family: var(--serif);
-  font-size: 1.6rem;
+  font-size: 2.2rem;
   line-height: 1;
+}
+
+.challenges-score-status {
+  font-weight: 750;
+}
+
+.challenges-score-breakdown {
+  color: var(--muted);
+  font-size: 0.7rem;
 }
 
 .challenges-layout {
@@ -2926,6 +2952,7 @@ li[data-podium="3"] .ranking-position {
   }
 
   .challenges-score {
+    justify-items: start;
     text-align: left;
   }
 

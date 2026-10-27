@@ -2151,6 +2151,35 @@ function buildAlbumChallengeBoard(challengeRows, mediaRows, viewerGuestName, { a
   };
 }
 
+// Só no ambiente de teste: pontuações de exemplo para ver o ranking preenchido.
+// Não são gravadas no banco e nunca aparecem no endereço real.
+const albumDemoLeaderboard = [
+  { guestName: "Gabriel Domingues", completed: 3, challengePoints: 60, speedBonus: 8, photos: 30 },
+  { guestName: "Ana Exemplo", completed: 3, challengePoints: 60, speedBonus: 5, photos: 12 },
+  { guestName: "Bruno Exemplo", completed: 2, challengePoints: 40, speedBonus: 3, photos: 9 },
+  { guestName: "Carla Exemplo", completed: 2, challengePoints: 30, speedBonus: 2, photos: 15 },
+  { guestName: "Diego Exemplo", completed: 1, challengePoints: 20, speedBonus: 1, photos: 6 },
+  { guestName: "Elisa Exemplo", completed: 0, challengePoints: 0, speedBonus: 0, photos: 4 },
+];
+
+function mergeAlbumDemoLeaderboard(board, viewerGuestName) {
+  const realKeys = new Set(board.leaderboard.map((entry) => normalizeGuestName(entry.guestName)));
+  const demo = albumDemoLeaderboard
+    .filter((entry) => !realKeys.has(normalizeGuestName(entry.guestName)))
+    .map((entry) => {
+      const photoPoints = Math.min(entry.photos * albumScoreRules.pointsPerPhoto, albumScoreRules.maxPhotoPoints);
+      return { ...entry, photoPoints, points: entry.challengePoints + entry.speedBonus + photoPoints, demo: true };
+    });
+  const leaderboard = [...board.leaderboard, ...demo]
+    .sort((a, b) => b.points - a.points || b.completed - a.completed || b.speedBonus - a.speedBonus);
+  leaderboard.forEach((entry, index) => {
+    entry.rank = index + 1;
+  });
+  const viewerKey = normalizeGuestName(viewerGuestName);
+  const viewer = leaderboard.find((entry) => normalizeGuestName(entry.guestName) === viewerKey);
+  return { ...board, leaderboard, me: { ...board.me, rank: viewer?.rank || null } };
+}
+
 async function loadAlbumChallengeBoard(viewerGuestName) {
   const viewerIsAdmin = isAlbumAdmin(viewerGuestName);
   // Os noivos não participam do sorteio; convidados recebem os 4 na primeira vez que abrem.
@@ -2902,11 +2931,13 @@ async function handleApi(request, response, pathname) {
         sendJson(response, 200, buildAlbumChallengeBoard([], [], session.guestName));
         return true;
       }
-      const board = await loadAlbumChallengeBoard(session.guestName);
+      const loadedBoard = await loadAlbumChallengeBoard(session.guestName);
+      const board = isAlbumTestRequest() ? mergeAlbumDemoLeaderboard(loadedBoard, session.guestName) : loadedBoard;
       // Todos veem o ranking completo; só os noivos veem quem entrou sem confirmação.
       if (isAlbumAdmin(session.guestName)) {
         const directory = await loadAlbumGuestDirectory().catch(() => new Map());
         board.leaderboard.forEach((entry) => {
+          if (entry.demo) return;
           entry.withoutRsvp = directory.get(normalizeGuestName(entry.guestName))?.source !== "rsvp";
         });
       }

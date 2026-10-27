@@ -2260,6 +2260,13 @@ function createRankingItem(entry, { detailed = false } = {}) {
     flag.title = "Entrou pelo \"Não achei meu nome\"";
     name.append(flag);
   }
+  if (entry.demo) {
+    const flag = document.createElement("small");
+    flag.className = "ranking-flag";
+    flag.textContent = " · exemplo";
+    flag.title = "Pontuação de exemplo, só no ambiente de teste";
+    name.append(flag);
+  }
   const detail = document.createElement("small");
   detail.className = "ranking-detail";
   detail.textContent = describeScore(entry);
@@ -2297,6 +2304,28 @@ function renderFullRanking() {
   const entries = board.leaderboard.filter((entry) => !filter || foldGuestName(entry.guestName).includes(filter));
   rankingFullList.replaceChildren(...entries.map((entry) => createRankingItem(entry, { detailed: true })));
   rankingFullEmpty.hidden = entries.length > 0;
+}
+
+// Placar da pessoa: total geral (desafios + rapidez + fotos), posição e de onde vieram os pontos.
+function renderScoreCard(board) {
+  const { me } = board;
+  const label = document.createElement("span");
+  label.className = "challenges-score-label";
+  label.textContent = "Seus pontos";
+  const total = document.createElement("strong");
+  total.textContent = String(me.points);
+  const status = document.createElement("span");
+  status.className = "challenges-score-status";
+  const ownChallenges = board.challenges.filter((challenge) => challenge.scope === "draw");
+  const doneCount = ownChallenges.filter((challenge) => challenge.completedByMe).length;
+  status.textContent = me.rank
+    ? `${me.rank}º lugar · ${doneCount}/${ownChallenges.length} desafios`
+    : `${doneCount}/${ownChallenges.length} desafios`;
+  const breakdown = document.createElement("span");
+  breakdown.className = "challenges-score-breakdown";
+  breakdown.textContent = `Desafios ${me.challengePoints} · Rapidez ${me.speedBonus} · Fotos ${me.photoPoints}`;
+  challengesScore.replaceChildren(label, total, status, breakdown);
+  challengesScore.hidden = albumIsAdmin;
 }
 
 function renderScoreRules(rules) {
@@ -2344,13 +2373,7 @@ function renderChallenges(board) {
   challengesList.scrollLeft = 0;
   setupChallengesCarousel();
 
-  challengesScore.replaceChildren();
-  const score = document.createElement("strong");
-  score.textContent = String(board.me.points);
-  challengesScore.append(score, board.me.points === 1 ? "ponto" : "pontos");
-  const doneCount = board.challenges.filter((challenge) => challenge.completedByMe).length;
-  challengesScore.append(` · ${doneCount}/${board.challenges.length} desafios`);
-  if (board.me.rank) challengesScore.append(` · ${board.me.rank}º lugar`);
+  renderScoreCard(board);
 
   renderScoreRules(board.rules);
   renderRanking(board);

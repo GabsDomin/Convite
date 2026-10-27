@@ -172,6 +172,15 @@ describe("álbum antes da abertura (28/11 às 15h)", () => {
     assert.equal(session.albumTestMode, true);
     assert.equal((await app.call("/api/album/media", { cookie: guest.sessionCookie, host: testHost })).status, 200);
 
+    // Ranking de exemplo só no ambiente de teste, com o noivo em 1º.
+    const testBoard = (await app.call("/api/album/challenges", { cookie: guest.sessionCookie, host: testHost })).body;
+    assert.deepEqual(testBoard.leaderboard.slice(0, 3).map(({ rank, guestName, points, demo }) => [rank, guestName, points, demo]), [
+      [1, "Gabriel Domingues", 83, true],
+      [2, "Ana Exemplo", 77, true],
+      [3, "Bruno Exemplo", 52, true],
+    ]);
+    assert.equal(supabase.state.album_media.length, 0, "o exemplo não grava nada no banco");
+
     // A mesma sessão, pelo endereço normal, continua barrada até a data.
     assert.equal((await app.call("/api/album/media", { cookie: guest.sessionCookie })).status, 403);
     assert.equal((await app.call("/api/album/entry")).body.publicOpen, false);
