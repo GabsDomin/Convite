@@ -542,3 +542,65 @@ describe("álbum aberto", () => {
     assert.ok(guestBoard.leaderboard.length > 12);
   });
 });
+
+describe("lixeira do painel de apoio", () => {
+  let supabase;
+  let app;
+
+  function supportCookie(guestName = "Gabriel Domingues") {
+    const payload = Buffer.from(JSON.stringify({ role: "support", guestName, expiresAt: Date.now() + 60_000 })).toString("base64url");
+    const signature = createHmac("sha256", signingSecret).update(payload).digest("base64url");
+    return `gab_naia_support_session=${payload}.${signature}`;
+  }
+
+  before(async () => {
+    supabase = createFakeSupabase({ tables: seedTables() });
+    app = await startApp({ supabaseUrl: await supabase.listen(), openAt: "2099-01-01T00:00:00-03:00" });
+  });
+
+  after(async () => {
+    await app?.stop();
+    await supabase?.close();
+  });
+
+  const remove = (id, cookie = supportCookie()) => app.call(`/api/support/rsvps/${id}`, { method: "DELETE", cookie });
+
+  test("só o painel de apoio do Gabriel pode remover convidados", async () => {
+    assert.equal((await remove("44444444-4444-4444-8444-444444444444", null)).status, 401);
+    assert.equal((await remove("44444444-4444-4444-8444-444444444444", supportCookie("Pessoa Teste"))).status, 401);
+    assert.equal((await remove("00000000-0000-4000-8000-000000000099")).status, 404);
+    assert.ok(supabase.state.rsvps.some((row) => row.guest_name === "Livia Fernandes"));
+  });
+
+  test("o painel traz o identificador de cada pessoa para a lixeira", async () => {
+    const overview = (await app.call("/api/support/overview?fresh=1", { cookie: supportCookie() })).body;
+    const joice = overview.households.find((household) => household.titular === "Joice de Paula Silva");
+    assert.deepEqual(joice.members.map(({ id, name, titular }) => [id, name, titular]), [
+      [joiceId, "Joice de Paula Silva", true],
+      ["55555555-5555-4555-8555-555555555555", "Livia de Paula", false],
+    ]);
+  });
+
+  test("remover um acompanhante tira só a pessoa e ajusta o tipo do grupo", async () => {
+    const response = await remove("55555555-5555-4555-8555-555555555555");
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.deepEqual(response.body.removed, ["Livia de Paula"]);
+    assert.equal(response.body.groupPartySize, "Somente eu");
+    assert.equal(supabase.state.rsvps.find((row) => row.id === joiceId).party_size, "Somente eu");
+    assert.equal(supabase.state.rsvps.some((row) => row.guest_name === "Livia de Paula"), false);
+
+    // O painel já mostra a mudança (o cache é descartado).
+    const overview = (await app.call("/api/support/overview", { cookie: supportCookie() })).body;
+    assert.equal(overview.households.find((household) => household.titular === "Joice de Paula Silva").members.length, 1);
+  });
+
+  test("remover o titular tira a confirmação inteira, com lembretes de aparelho", async () => {
+    const response = await remove(joiceId);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.removed, ["Joice de Paula Silva"]);
+    assert.equal(supabase.state.rsvps.some((row) => row.id === joiceId), false);
+    assert.equal(supabase.state.rsvp_remember_tokens.some((row) => row.primary_rsvp_id === joiceId), false);
+    // Quem saiu do convite some da busca do álbum.
+    assert.equal(supabase.state.rsvps.length, 4);
+  });
+});

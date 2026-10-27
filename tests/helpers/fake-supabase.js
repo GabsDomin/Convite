@@ -213,6 +213,13 @@ export function createFakeSupabase({ tables = {}, passwords = {}, maxRows = 1000
     if (request.method === "DELETE") {
       const deleted = state[table].filter((row) => matches(row, params));
       state[table] = state[table].filter((row) => !deleted.includes(row));
+      if (table === "rsvps") {
+        // ON DELETE CASCADE do banco real: acompanhantes e lembretes de aparelho saem junto.
+        const ids = new Set(deleted.map((row) => row.id));
+        deleted.push(...state.rsvps.filter((row) => ids.has(row.primary_rsvp_id)));
+        state.rsvps = state.rsvps.filter((row) => !ids.has(row.primary_rsvp_id));
+        state.rsvp_remember_tokens = state.rsvp_remember_tokens.filter((row) => !ids.has(row.primary_rsvp_id));
+      }
       if (table === "album_challenges") {
         const ids = new Set(deleted.map((row) => row.id));
         state.album_media.forEach((media) => {

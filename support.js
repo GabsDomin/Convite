@@ -219,6 +219,55 @@ function householdMatchesFilter(household) {
   return household.partySize === activeRsvpFilter;
 }
 
+function trashButton(rsvpId, label, extraClass = "") {
+  return `
+    <button class="support-trash ${extraClass}" type="button" data-delete-rsvp="${escapeHtml(rsvpId)}"
+      aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></svg>
+    </button>`;
+}
+
+function findRsvpMember(rsvpId) {
+  for (const household of overviewCache?.households || []) {
+    if (household.id === rsvpId) return { household, member: household.members[0], wholeGroup: true };
+    const member = (household.members || []).find((candidate) => candidate.id === rsvpId);
+    if (member) return { household, member, wholeGroup: false };
+  }
+  return null;
+}
+
+// Lixeira: confirma dizendo exatamente quem sai, apaga no servidor e recarrega o painel.
+async function deleteRsvp(button) {
+  const found = findRsvpMember(button.dataset.deleteRsvp);
+  if (!found) return;
+  const { household, member, wholeGroup } = found;
+  const names = wholeGroup ? household.members.map((person) => person.name) : [member.name];
+  const message = wholeGroup && names.length > 1
+    ? `Remover a confirmação de ${household.titular}?\n\nSaem do convite: ${names.join(", ")}.\n\nIsso não pode ser desfeito.`
+    : wholeGroup
+      ? `Remover a confirmação de ${household.titular}?\n\nIsso não pode ser desfeito.`
+      : `Remover ${member.name} do grupo de ${household.titular}?\n\nIsso não pode ser desfeito.`;
+  if (!window.confirm(message)) return;
+
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/support/rsvps/${encodeURIComponent(button.dataset.deleteRsvp)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      window.location.replace("/apoio/login");
+      return;
+    }
+    if (!response.ok) throw new Error(payload.error || "Não foi possível remover.");
+    await loadOverview({ forceFresh: true });
+  } catch (error) {
+    button.disabled = false;
+    showError(error.message || "Não foi possível remover.");
+  }
+}
+
 function renderHouseholds(households, query = "") {
   const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
   const filtered = households.filter(
@@ -228,7 +277,11 @@ function renderHouseholds(households, query = "") {
   rsvpBody.innerHTML = filtered
     .map((household) => {
       const members = (household.members || [])
-        .map((member) => `<li><strong>${escapeHtml(member.name)}</strong> · ${escapeHtml(member.partySize)}</li>`)
+        .map((member) => `
+          <li>
+            <strong>${escapeHtml(member.name)}</strong> · ${escapeHtml(member.partySize)}
+            ${member.titular || !member.id ? "" : trashButton(member.id, `Remover ${member.name} do grupo`, "support-trash-small")}
+          </li>`)
         .join("");
       return `
         <tr>
@@ -237,6 +290,7 @@ function renderHouseholds(households, query = "") {
           <td>${household.members.length}</td>
           <td>${escapeHtml(formatDateTime(household.updatedAt))}</td>
           <td><ul class="support-members">${members}</ul></td>
+          <td>${household.id ? trashButton(household.id, `Remover a confirmação de ${household.titular}`) : ""}</td>
         </tr>
       `;
     })
@@ -737,6 +791,11 @@ searchInput.addEventListener("input", () => {
 
 refreshButton.addEventListener("click", () => {
   loadOverview({ forceFresh: true });
+});
+
+rsvpBody.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-delete-rsvp]");
+  if (button) deleteRsvp(button);
 });
 
 exportButton.addEventListener("click", exportCsv);

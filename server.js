@@ -1820,10 +1820,12 @@ async function buildSupportOverview() {
   const households = primaries.map((primary) => {
     const companions = companionsByPrimary.get(primary.id) || [];
     const members = [
-      { name: primary.guest_name, partySize: primary.party_size },
+      { id: primary.id, name: primary.guest_name, partySize: primary.party_size, titular: true },
       ...companions.map((companion) => ({
+        id: companion.id,
         name: companion.guest_name,
         partySize: companion.party_size,
+        titular: false,
       })),
     ];
 
@@ -2773,6 +2775,59 @@ async function handleApi(request, response, pathname) {
       const bypassCache = new URL(request.url, "http://127.0.0.1").searchParams.get("fresh") === "1";
       const overview = await buildSupportOverviewCached({ bypassCache });
       sendJson(response, 200, overview);
+      return true;
+    }
+
+    // Lixeira do painel de apoio. Titular: sai a confirmação inteira (acompanhantes e lembretes
+    // de aparelho saem junto, em cascata no banco). Acompanhante: sai só a pessoa e o tipo do grupo
+    // é recalculado pelos acompanhantes que ficaram.
+    const supportRsvpDeleteMatch = pathname.match(/^\/api\/support\/rsvps\/([0-9a-f-]{36})$/i);
+    if (request.method === "DELETE" && supportRsvpDeleteMatch) {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "support-rsvp-delete", 30, 10 * 60_000);
+      requireSupportSession(request);
+      const rsvpId = supportRsvpDeleteMatch[1].toLowerCase();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(rsvpId)) {
+        throw new HttpError(400, "Convidado inválido.");
+      }
+      const rows = await readSupabaseTable(
+        `rsvps?select=id,guest_name,party_size,primary_rsvp_id&id=eq.${encodeURIComponent(rsvpId)}&limit=1`,
+      );
+      const target = Array.isArray(rows) ? rows[0] : null;
+      if (!target) throw new HttpError(404, "Convidado não encontrado.");
+
+      const removed = target.primary_rsvp_id
+        ? [target.guest_name]
+        : [target.guest_name, ...(await readSupabaseTable(
+          `rsvps?select=guest_name&primary_rsvp_id=eq.${encodeURIComponent(target.id)}`,
+        )).map((row) => row.guest_name)];
+      await deleteSupabaseTable(`rsvps?id=eq.${encodeURIComponent(target.id)}`);
+
+      let groupPartySize = null;
+      if (target.primary_rsvp_id) {
+        const remaining = await readSupabaseTable(
+          `rsvps?select=party_size&primary_rsvp_id=eq.${encodeURIComponent(target.primary_rsvp_id)}`,
+        );
+        const hasPartner = remaining.some((row) => row.party_size === "Parceiro(a)");
+        const hasChildren = remaining.some((row) => row.party_size === "Filho(a)");
+        groupPartySize = hasPartner && hasChildren
+          ? "Família"
+          : hasPartner
+            ? "Casal"
+            : hasChildren
+              ? "Responsável e menores"
+              : remaining.length ? null : "Somente eu";
+        if (groupPartySize) {
+          await patchSupabaseTable(
+            `rsvps?id=eq.${encodeURIComponent(target.primary_rsvp_id)}`,
+            { party_size: groupPartySize },
+          );
+        }
+      }
+
+      supportOverviewCache = { expiresAt: 0, payload: null };
+      invalidateAlbumGuestDirectory();
+      sendJson(response, 200, { ok: true, removed, groupPartySize });
       return true;
     }
 
