@@ -519,10 +519,8 @@ svg {
   line-height: 1.05;
 }
 
-.two-columns {
-  grid-template-columns: repeat(2, 1fr);
-  width: min(100%, 920px);
-  margin-inline: auto;
+.three-columns {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .info-card {
@@ -546,19 +544,6 @@ svg {
   color: var(--royal);
   font-size: 1.25rem;
 }
-
-.info-card strong:has(+ .info-card-note) {
-  margin-bottom: 0.3rem;
-}
-
-.info-card-note {
-  display: block;
-  margin-bottom: 1rem;
-  color: var(--royal-dark);
-  font-size: 0.92rem;
-  font-weight: 650;
-}
-
 .location-card {
   position: relative;
   display: grid;
@@ -1566,7 +1551,7 @@ svg {
   }
 
   .event-grid,
-  .two-columns,
+  .three-columns,
   .gift-grid {
     grid-template-columns: 1fr;
   }
@@ -1713,15 +1698,9 @@ svg {
     line-height: 1.1;
   }
 
-  .details .two-columns {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .details .three-columns {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.45rem;
-  }
-
-  .details .info-card-note {
-    margin: 0.25rem 0 0;
-    font-size: 0.7rem;
-    line-height: 1.2;
   }
 
   .details .info-card {
