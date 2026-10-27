@@ -13,7 +13,7 @@ export function rsvpColumnName(name) {
   return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-export function createFakeSupabase({ tables = {}, passwords = {} } = {}) {
+export function createFakeSupabase({ tables = {}, passwords = {}, maxRows = 1000 } = {}) {
   const state = {
     rsvps: [],
     album_guests: [],
@@ -162,9 +162,10 @@ export function createFakeSupabase({ tables = {}, passwords = {} } = {}) {
     const params = Array.from(url.searchParams.entries());
 
     if (request.method === "GET") {
-      let rows = state[table].filter((row) => matches(row, params));
-      const limit = Number(url.searchParams.get("limit"));
-      if (limit) rows = rows.slice(0, limit);
+      // Como no Supabase: no máximo 1000 linhas por consulta, mesmo pedindo mais.
+      const offset = Number(url.searchParams.get("offset")) || 0;
+      const limit = Math.min(Number(url.searchParams.get("limit")) || maxRows, maxRows);
+      const rows = state[table].filter((row) => matches(row, params)).slice(offset, offset + limit);
       return send(response, 200, rows);
     }
     if (request.method === "POST") {

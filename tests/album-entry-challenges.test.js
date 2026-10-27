@@ -478,6 +478,17 @@ describe("álbum aberto", () => {
     }
   });
 
+  test("ranking e desafios passam do limite de 1000 linhas por consulta do Supabase", async () => {
+    // Mais de 1000 fotos: o servidor precisa paginar, senão o ranking para de contar.
+    for (let index = 0; index < 1100; index += 1) proof("Convidado Volume", null, `volume-${index}`);
+    const late = await createChallenge({ title: "Desafio criado por último", difficulty: "easy", scope: "all" });
+    proof("Convidado Volume", late.id, "volume-desafio");
+    const cookie = (await enter(app, "Convidado Volume", "new")).sessionCookie;
+    const mine = (await board(cookie)).me;
+    assert.equal(mine.photos, 1101);
+    assert.equal(mine.completed >= 1, true, "a foto mais recente (depois da milésima) deveria contar o desafio");
+  });
+
   test("fotos têm teto de 15 pontos e todos veem o ranking completo", async () => {
     const taina = (await enter(app, "Tainá Antunes", "list")).sessionCookie;
     const before = (await board(taina)).me;

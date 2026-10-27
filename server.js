@@ -1145,6 +1145,18 @@ async function readSupabaseTable(path) {
   return data;
 }
 
+// O Supabase devolve no máximo 1000 linhas por consulta, mesmo pedindo mais.
+// Lê em páginas até acabar; o path deve ter um "order" estável (ex.: terminando em id).
+async function readSupabaseTableAll(path, pageSize = 500) {
+  const rows = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await readSupabaseTable(`${path}&limit=${pageSize}&offset=${offset}`);
+    const list = Array.isArray(page) ? page : [];
+    rows.push(...list);
+    if (list.length < pageSize) return rows;
+  }
+}
+
 async function countSupabaseRows(pathQuery) {
   const endpoint = new URL(`/rest/v1/${pathQuery}`, supabaseUrl);
   const supabaseResponse = await fetch(endpoint, {
@@ -1968,10 +1980,7 @@ function normalizeAlbumChallenge(challenge) {
 }
 
 async function readAlbumChallenges() {
-  const rows = await readSupabaseTable(
-    `album_challenges?select=${albumChallengeSelect}&order=sort_order.asc,created_at.asc&limit=200`,
-  );
-  return Array.isArray(rows) ? rows : [];
+  return readSupabaseTableAll(`album_challenges?select=${albumChallengeSelect}&order=sort_order.asc,created_at.asc,id.asc`);
 }
 
 // Convidado só envia foto para desafio "para todos" ou sorteado para ele; os noivos, para qualquer um.
@@ -2123,8 +2132,8 @@ async function loadAlbumChallengeBoard(viewerGuestName) {
   if (!viewerIsAdmin) await assignAlbumChallenges(viewerGuestName);
   const [challengeRows, mediaRows, assignmentRows] = await Promise.all([
     readAlbumChallenges(),
-    readSupabaseTable("album_media?select=guest_name,challenge_id,created_at&order=created_at.asc&limit=10000"),
-    readSupabaseTable("album_challenge_assignments?select=guest_key,challenge_id,active,swapped&limit=10000"),
+    readSupabaseTableAll("album_media?select=guest_name,challenge_id,created_at&order=created_at.asc,id.asc"),
+    readSupabaseTableAll("album_challenge_assignments?select=guest_key,challenge_id,active,swapped&order=id.asc"),
   ]);
   return buildAlbumChallengeBoard(challengeRows, Array.isArray(mediaRows) ? mediaRows : [], viewerGuestName, {
     assignments: Array.isArray(assignmentRows) ? assignmentRows : [],
@@ -2144,8 +2153,8 @@ async function loadAlbumGuestDirectory() {
     return albumGuestDirectoryCache.entries;
   }
   const [rsvpRows, albumGuestRows] = await Promise.all([
-    readSupabaseTable("rsvps?select=guest_name&limit=5000"),
-    readSupabaseTable("album_guests?select=guest_name&limit=5000").catch(() => []),
+    readSupabaseTableAll("rsvps?select=guest_name&order=id.asc"),
+    readSupabaseTableAll("album_guests?select=guest_name&order=id.asc").catch(() => []),
   ]);
   const entries = new Map();
   const addRows = (rows, source) => {
@@ -2930,8 +2939,8 @@ async function handleApi(request, response, pathname) {
       const challengeId = requireAlbumChallengeId(albumChallengeSwapMatch[1]);
       const guestKey = normalizeGuestName(session.guestName);
       // Desafio já completado não pode ser trocado, senão a pessoa ganharia os pontos e um desafio novo.
-      const proofs = await readSupabaseTable(
-        `album_media?select=guest_name&challenge_id=eq.${encodeURIComponent(challengeId)}&limit=5000`,
+      const proofs = await readSupabaseTableAll(
+        `album_media?select=guest_name&challenge_id=eq.${encodeURIComponent(challengeId)}&order=id.asc`,
       );
       if ((Array.isArray(proofs) ? proofs : []).some((row) => normalizeGuestName(row.guest_name) === guestKey)) {
         throw new HttpError(409, "Você já completou este desafio.");
