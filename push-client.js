@@ -19,8 +19,10 @@
     return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   }
 
+  // A inscrição só funciona com o service worker já ativo; na primeira visita ele ainda está instalando.
   async function registration() {
-    return navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    return navigator.serviceWorker.ready;
   }
 
   async function sendSubscription(subscription) {
