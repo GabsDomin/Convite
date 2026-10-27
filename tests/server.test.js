@@ -440,9 +440,10 @@ test("detalhes apresentam cerimônia, jantar e programação sem traje ou padrin
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 
   assert.match(html, /<h3>Cerimônia<\/h3>[\s\S]*?<strong>18h<\/strong>/);
-  assert.match(html, /17h20/);
+  assert.match(html, /começam a chegar às 17h/);
+  assert.doesNotMatch(html, /17h20/);
   assert.match(html, /<h3>Jantar<\/h3>[\s\S]*?<strong>Após a cerimônia<\/strong>/);
-  assert.match(html, /<h3>Programação<\/h3>[\s\S]*?<strong>Recepção às 17h20<\/strong>/);
+  assert.match(html, /<h3>Programação<\/h3>[\s\S]*?<strong>Recepção às 17h30<\/strong>/);
   assert.doesNotMatch(html, /11h30|Almoço|Traje|madrinhas|padrinhos/i);
 });
 
