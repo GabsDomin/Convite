@@ -3,7 +3,7 @@
   "name": "Gabriel & Halanaia",
   "short_name": "G & H",
   "description": "Convite e álbum coletivo do casamento de Gabriel e Halanaia.",
-  "start_url": "/album",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#fffdfb",
