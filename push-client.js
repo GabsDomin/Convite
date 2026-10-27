@@ -52,7 +52,14 @@
     const config = await loadConfig();
     if (!supported || !config.enabled) throw new Error("Este navegador não recebe avisos.");
     const permission = await Notification.requestPermission();
-    if (permission !== "granted") throw new Error("Você não permitiu os avisos. Dá para mudar nas configurações do navegador.");
+    if (permission === "denied") {
+      // Bloqueio do site, da aba anônima ou de uma política do computador (comum em computadores de empresa).
+      throw new Error("Os avisos estão bloqueados neste navegador. Clique no cadeado ao lado do endereço, em Notificações escolha Permitir e recarregue a página. Em computador de empresa ou aba anônima, use o celular.");
+    }
+    if (permission !== "granted") {
+      // Janela fechada sem resposta, ou o pedido "silencioso" (sininho na barra de endereço).
+      throw new Error("A janela de permissão foi fechada ou ficou escondida. Procure um sininho na barra de endereço e escolha Permitir, ou toque em Tentar de novo.");
+    }
     const reg = await registration();
     const subscription = await reg.pushManager.getSubscription()
       || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeKey(config.publicKey) });
