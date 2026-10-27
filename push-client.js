@@ -171,26 +171,59 @@
     return button;
   }
 
-  // Faixa "Deseja instalar o convite?". Um toque instala e ativa os avisos
-  // (navegadores só abrem essas janelas a partir de um toque da pessoa).
+  // O que falta neste aparelho. Com o convite instalado e os avisos ativos, nada aparece.
+  // No navegador não dá para saber se o app já foi instalado; o Chrome só oferece a instalação
+  // para quem ainda não instalou, então o pedido de instalação só aparece quando ele oferece.
+  function missingStep(pushState) {
+    if (isStandalone) {
+      if (pushState === "available") return "enable";
+      if (pushState === "denied") return "denied";
+      return null;
+    }
+    if (isIos) return "ios-install";
+    if (pushState === "available") return "install-and-enable";
+    if (pushState === "denied") return "denied";
+    return installPrompt ? "install-only" : null;
+  }
+
   async function mountBanner() {
     const pushState = await getState().catch(() => "unsupported");
     if (pushState === "enabled") refresh();
-
-    const iosInBrowser = isIos && !isStandalone;
-    const needsPush = pushState === "available";
-    // Fora do iPhone, quem já tem os avisos não precisa da faixa (instalar é opcional).
-    if (!iosInBrowser && !needsPush) return;
     if (recentlyDismissed()) return;
 
-    const style = document.createElement("style");
-    style.textContent = bannerStyles;
-    document.head.append(style);
+    const step = missingStep(pushState);
+    if (step) {
+      renderBanner(step);
+      return;
+    }
+    // Avisos ativos no navegador, mas a instalação ainda não foi oferecida: o Chrome libera
+    // depois de alguns segundos de uso. Se liberar, falta só instalar.
+    if (!isStandalone && !isIos && pushState !== "denied") {
+      waitForInstallPrompt(60_000).then((available) => {
+        if (available && !recentlyDismissed()) renderBanner("install-only");
+      });
+    }
+  }
+
+  function deniedHelp() {
+    if (isIos) return "Abra os Ajustes do iPhone, toque em Notificações, escolha Gabriel & Halanaia e ative Permitir Notificações.";
+    if (isStandalone) return "Toque e segure o ícone do convite, abra Informações do app e ative as Notificações.";
+    return "Toque no cadeado ao lado do endereço, abra Permissões e permita as Notificações. Depois recarregue a página.";
+  }
+
+  function renderBanner(step) {
+    if (document.querySelector(".push-banner")) return;
+    if (!document.querySelector("style[data-push-banner]")) {
+      const style = document.createElement("style");
+      style.dataset.pushBanner = "";
+      style.textContent = bannerStyles;
+      document.head.append(style);
+    }
 
     const banner = document.createElement("aside");
     banner.className = "push-banner";
     banner.setAttribute("role", "dialog");
-    banner.setAttribute("aria-label", "Instalar o convite");
+    banner.setAttribute("aria-label", "Instalar o convite e receber avisos");
     const icon = document.createElement("img");
     icon.className = "push-banner-icon";
     icon.src = "/assets/icon-192.png";
@@ -213,8 +246,8 @@
       window.setTimeout(() => banner.remove(), 4000);
     }
 
-    if (iosInBrowser) {
-      // A Apple não deixa sites se instalarem sozinhos: mostramos o caminho no Safari.
+    if (step === "ios-install") {
+      // A Apple não deixa sites se instalarem sozinhos: mostramos o caminho no navegador em uso.
       title.textContent = "Deseja instalar o convite?";
       text.textContent = "No iPhone, os avisos do casamento só chegam com o convite instalado.";
       const install = createButton("push-banner-allow", "Instalar convite", () => {
@@ -240,8 +273,7 @@
         later.textContent = "Entendi";
       });
       actions.append(install);
-    } else if (isStandalone) {
-      // Já instalado (inclusive o iPhone aberto pelo ícone): falta só um toque para os avisos.
+    } else if (step === "enable") {
       title.textContent = "Último passo: ative os avisos";
       text.textContent = "Assim você fica sabendo quando o álbum abrir e quando chegar um novo desafio.";
       const allow = createButton("push-banner-allow", "Ativar avisos", async () => {
@@ -257,6 +289,23 @@
         }
       });
       actions.append(allow);
+    } else if (step === "denied") {
+      title.textContent = "Os avisos estão bloqueados";
+      text.textContent = `Para receber as novidades do casamento: ${deniedHelp()}`;
+      later.textContent = "Entendi";
+    } else if (step === "install-only") {
+      title.textContent = "Falta só instalar o convite";
+      text.textContent = "Os avisos já estão ativados. Instale para abrir o convite com um toque, como um app.";
+      const install = createButton("push-banner-allow", "Instalar", async () => {
+        install.disabled = true;
+        const ok = await promptInstall().catch(() => false);
+        if (ok || installedNow) {
+          finish("O convite foi instalado e os avisos estão ativados.");
+        } else {
+          install.disabled = false;
+        }
+      });
+      actions.append(install);
     } else {
       title.textContent = "Deseja instalar o convite?";
       text.textContent = "Instalando, você recebe os avisos do casamento: quando o álbum abrir e quando chegar um novo desafio.";
