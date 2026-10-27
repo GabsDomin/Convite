@@ -47,6 +47,25 @@ function handleFakeSupabase(request, response) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/rest/v1/rpc/get_public_gifts") {
+    reply([
+      { id: "air-fryer", name: "Air Fryer", gift_type: "fixed", section: "special", value: 350, status: "reserved" },
+      { id: "moveis", name: "Cota para móveis", gift_type: "quota", section: "quotas", goal: 3000, quota_options: [150], status: "available" },
+      { id: "panela", name: "Panela", gift_type: "fixed", section: "special", value: 200, status: "available" },
+    ]);
+    return;
+  }
+
+  if (url.pathname === "/rest/v1/gift_reservations") {
+    reply([
+      { gift_id: "air-fryer", guest_name: "nicolly souza" },
+      { gift_id: "moveis", guest_name: "Ana Lima" },
+      { gift_id: "moveis", guest_name: "ANA Costa" },
+      { gift_id: "moveis", guest_name: "Pedro Alves" },
+    ]);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/rest/v1/rsvp_remember_tokens") {
     reply([{}]);
     return;
@@ -172,6 +191,17 @@ test("o aparelho que confirmou pode remover acompanhantes", async () => {
 
   assert.equal(result.status, 200);
   assert.equal(confirmCalls.length, 1);
+});
+
+test("lista de presentes mostra só o primeiro nome de quem presenteou", async () => {
+  const response = await fetch(`${baseUrl}/api/gifts`);
+  const { gifts } = await response.json();
+  const giversById = Object.fromEntries(gifts.map((gift) => [gift.id, gift.givers]));
+
+  assert.deepEqual(giversById["air-fryer"], ["Nicolly"]);
+  assert.deepEqual(giversById.moveis, ["Ana", "Pedro"]);
+  assert.deepEqual(giversById.panela, []);
+  assert.doesNotMatch(JSON.stringify(gifts), /Souza|Lima|Costa|Alves/);
 });
 
 test("consulta por nome só mostra acompanhantes ao aparelho que confirmou", async () => {

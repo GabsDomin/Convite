@@ -26,10 +26,16 @@ R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=gab-naia-album
 R2_PUBLIC_BASE_URL=https://media.gab-naia.online
-R2_IMAGE_TRANSFORM_BASE_URL=https://media.gab-naia.online
 ALBUM_UPLOAD_SIGNING_SECRET=...
-ALBUM_UPLOAD_CODE=...
+ALBUM_ADMIN_GUEST_NAMES=Gabriel Domingues
 ```
+
+Opcionais: `R2_IMAGE_TRANSFORM_BASE_URL` (miniaturas do álbum), `ALBUM_UPLOAD_CODE`
+(código extra para enviar mídia) e `ALBUM_PUBLIC_OPEN_AT` (abertura do álbum). Veja
+`.env.example`.
+
+As variáveis valem para `Production` e `Preview`. A versão do Node é 24.x, igual em
+`package.json`, `.nvmrc`, `.node-version` e nas configurações do projeto na Vercel.
 
 `BACKEND_URL` é opcional. Ele só é necessário se a API ficar em outro domínio; nesse projeto, deixe sem cadastrar porque o backend usa o mesmo `SITE_URL`.
 

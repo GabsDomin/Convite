@@ -909,6 +909,89 @@ svg {
   font-weight: 700;
 }
 
+.gift-givers {
+  position: relative;
+  z-index: 1;
+  margin: auto 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px dashed rgba(0, 63, 152, 0.16);
+}
+
+.gift-givers-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--blue-mid);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gift-givers-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gift-giver {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  border: 1px solid rgba(0, 63, 152, 0.14);
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem 0.2rem 0.2rem;
+  background: var(--paper);
+  box-shadow: 0 4px 12px rgba(0, 47, 115, 0.06);
+  animation: gift-giver-in 420ms ease both;
+}
+
+.gift-giver-initial {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(135deg, var(--royal), var(--blue-mid));
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.gift-giver-name {
+  color: var(--royal-dark);
+  font-family: var(--serif);
+  font-size: 1.02rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.gift-giver-more {
+  padding-inline: 0.7rem;
+  color: var(--royal);
+  background: var(--mist);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+@keyframes gift-giver-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gift-giver {
+    animation: none;
+  }
+}
+
 .gift-footer {
   position: relative;
   z-index: 1;
@@ -917,6 +1000,10 @@ svg {
   justify-content: space-between;
   gap: 1rem;
   margin-top: auto;
+}
+
+.gift-givers + .gift-footer {
+  margin-top: 0.9rem;
 }
 
 .badge {

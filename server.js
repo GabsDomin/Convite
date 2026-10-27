@@ -2026,7 +2026,36 @@ async function getPublicGifts() {
   }
 }
 
-function normalizeGift(gift) {
+function formatGiverFirstName(guestName) {
+  const firstName = String(guestName || "").trim().split(/\s+/)[0] || "";
+  if (firstName.length < 2) return "";
+  return firstName.charAt(0).toLocaleUpperCase("pt-BR") + firstName.slice(1).toLocaleLowerCase("pt-BR");
+}
+
+// Reservas incluem as entregas em mãos e os pagamentos aprovados; só o primeiro nome é público.
+async function loadGiftGiversByGiftId() {
+  const giversByGiftId = new Map();
+  let rows;
+  try {
+    rows = await readSupabaseTable("gift_reservations?select=gift_id,guest_name&order=created_at.asc&limit=2000");
+  } catch (error) {
+    console.error("loadGiftGiversByGiftId:", error?.message || error);
+    return giversByGiftId;
+  }
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const firstName = formatGiverFirstName(row.guest_name);
+    if (!row.gift_id || !firstName) continue;
+    const givers = giversByGiftId.get(row.gift_id) || [];
+    if (!givers.some((name) => normalizeGuestName(name) === normalizeGuestName(firstName))) {
+      givers.push(firstName);
+    }
+    giversByGiftId.set(row.gift_id, givers);
+  }
+  return giversByGiftId;
+}
+
+function normalizeGift(gift, giversByGiftId = new Map()) {
   const quotaOptions = Array.isArray(gift.quota_options) ? gift.quota_options : [];
 
   return {
@@ -2042,6 +2071,7 @@ function normalizeGift(gift) {
     text: gift.description,
     imageUrl: normalizeImageUrl(gift.image_url),
     status: gift.status,
+    givers: giversByGiftId.get(gift.id) || [],
   };
 }
 
@@ -2386,8 +2416,8 @@ async function handleApi(request, response, pathname) {
 
     if (request.method === "GET" && pathname === "/api/gifts") {
       enforceRateLimit(request, "gifts", 120, 60_000);
-      const gifts = await getPublicGifts();
-      sendJson(response, 200, { gifts: gifts.map(normalizeGift) });
+      const [gifts, giversByGiftId] = await Promise.all([getPublicGifts(), loadGiftGiversByGiftId()]);
+      sendJson(response, 200, { gifts: gifts.map((gift) => normalizeGift(gift, giversByGiftId)) });
       return true;
     }
 

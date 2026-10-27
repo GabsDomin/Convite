@@ -176,6 +176,31 @@ function renderGiftImage(gift) {
   `;
 }
 
+const maxVisibleGivers = 4;
+
+function renderGiftGivers(gift) {
+  const givers = Array.isArray(gift.givers) ? gift.givers.filter(Boolean) : [];
+  if (!givers.length) return "";
+
+  const visibleGivers = givers.slice(0, maxVisibleGivers);
+  const hiddenCount = givers.length - visibleGivers.length;
+
+  return `
+    <div class="gift-givers" aria-label="Presenteado com carinho por ${escapeAttribute(givers.join(", "))}">
+      <span class="gift-givers-label">Com carinho de</span>
+      <ul class="gift-givers-list">
+        ${visibleGivers.map((name) => `
+          <li class="gift-giver">
+            <span class="gift-giver-initial" aria-hidden="true">${escapeHtml(name.charAt(0))}</span>
+            <span class="gift-giver-name">${escapeHtml(name)}</span>
+          </li>
+        `).join("")}
+        ${hiddenCount > 0 ? `<li class="gift-giver gift-giver-more">+${hiddenCount}</li>` : ""}
+      </ul>
+    </div>
+  `;
+}
+
 function renderGiftDescription(gift) {
   const className = gift.imageUrl ? "gift-description image-description" : "gift-description";
   return `<p class="${className}">${escapeHtml(gift.text)}</p>`;
@@ -642,6 +667,7 @@ function renderGifts() {
       gift.goal,
       gift.contributed,
       Array.isArray(gift.options) ? gift.options.join(",") : "",
+      Array.isArray(gift.givers) ? gift.givers.join(",") : "",
     ]),
   });
 
@@ -728,6 +754,7 @@ function normalizeGiftForUi(gift) {
     options: Array.isArray(gift.options) ? gift.options.map(Number) : [],
     status: gift.status || "available",
     imageUrl: normalizeImageUrl(gift.imageUrl),
+    givers: Array.isArray(gift.givers) ? gift.givers.map(String) : [],
   };
 }
 
@@ -776,6 +803,7 @@ function renderGiftCard(gift) {
           ${gift.options.map((option) => `<span>${formatCurrency(option)}</span>`).join("")}
         </div>
       ` : ""}
+      ${renderGiftGivers(gift)}
       <div class="gift-footer">
         <span class="badge available">${isOpen ? "Sempre disponível" : showReserved ? "Reservado" : "Disponível"}</span>
         ${showActionButton ? `
