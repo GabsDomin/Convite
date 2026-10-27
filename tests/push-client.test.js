@@ -1,5 +1,5 @@
-// Roda o push-client.js num navegador simulado e confere qual faixa aparece em cada situação:
-// com o convite instalado e os avisos ativos, nada pode aparecer.
+// Roda o push-client.js num navegador simulado e confere quando a faixa "Permitir avisos" aparece:
+// só onde os avisos funcionam e ainda não foram ativados.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
@@ -16,7 +16,6 @@ class FakeElement {
     this.attributes = {};
     this.listeners = {};
     this.textContent = "";
-    this.innerHTML = "";
     this.className = "";
   }
 
@@ -25,12 +24,6 @@ class FakeElement {
       node.parent = this;
       this.children.push(node);
     });
-  }
-
-  insertBefore(node, reference) {
-    node.parent = this;
-    const index = this.children.indexOf(reference);
-    this.children.splice(index < 0 ? this.children.length : index, 0, node);
   }
 
   remove() {
@@ -57,18 +50,11 @@ class FakeElement {
   }
 }
 
-function createBrowser({
-  userAgent = "Mozilla/5.0 (Linux; Android 14) Chrome/150 Mobile",
-  standalone = false,
-  pushSupported = true,
-  permission = "default",
-  subscribed = false,
-  dismissedAt = null,
-} = {}) {
+function createBrowser({ pushSupported = true, permission = "default", grantOnRequest = "granted", subscribed = false, dismissedAt = null } = {}) {
   const head = new FakeElement("head");
   const body = new FakeElement("body");
-  const windowListeners = {};
   const storage = new Map(dismissedAt ? [["gab-naia-push-dismissed-at", String(dismissedAt)]] : []);
+  const requests = [];
   const subscription = { toJSON: () => ({ endpoint: "https://push.example/abc", keys: {} }) };
   let currentSubscription = subscribed ? subscription : null;
   const registration = {
@@ -80,136 +66,113 @@ function createBrowser({
       },
     },
   };
+  const notification = {
+    permission,
+    requestPermission: async () => {
+      notification.permission = grantOnRequest;
+      return grantOnRequest;
+    },
+  };
 
   const window = {
-    matchMedia: () => ({ matches: standalone }),
-    addEventListener: (type, handler) => (windowListeners[type] ||= []).push(handler),
     setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)),
-    ...(pushSupported ? { PushManager: function PushManager() {}, Notification: { permission } } : {}),
+    ...(pushSupported ? { PushManager: function PushManager() {}, Notification: notification } : {}),
   };
-  const navigator = {
-    userAgent,
-    platform: userAgent.includes("iPhone") ? "iPhone" : "Linux",
-    maxTouchPoints: 5,
-    standalone,
-    ...(pushSupported
-      ? { serviceWorker: { register: async () => registration, ready: Promise.resolve(registration) } }
-      : {}),
-  };
+  const navigator = pushSupported
+    ? { serviceWorker: { register: async () => registration, ready: Promise.resolve(registration) } }
+    : {};
   const document = {
     head,
     body,
     createElement: (tag) => new FakeElement(tag),
-    querySelector: (selector) => {
-      for (const root of [head, body]) {
-        for (const node of root.walk()) {
-          if (selector === ".push-banner" && node.className === "push-banner") return node;
-          if (selector === "style[data-push-banner]" && node.tagName === "style" && "pushBanner" in node.dataset) return node;
-        }
-      }
-      return null;
-    },
+    querySelector: (selector) => [...body.walk()].find((node) => selector === ".push-banner" && node.className === "push-banner") ?? null,
   };
   const context = {
     window,
     navigator,
     document,
-    localStorage: {
-      getItem: (key) => storage.get(key) ?? null,
-      setItem: (key, value) => storage.set(key, value),
+    localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    fetch: async (url, options = {}) => {
+      requests.push({ url: String(url), method: options.method || "GET" });
+      return {
+        ok: true,
+        json: async () => (String(url).includes("/api/push/config") ? { enabled: true, publicKey: "AQAB" } : { ok: true }),
+      };
     },
-    fetch: async (url) => ({
-      ok: true,
-      json: async () => (String(url).includes("/api/push/config") ? { enabled: true, publicKey: "AQAB" } : {}),
-    }),
     atob: (value) => Buffer.from(value, "base64").toString("binary"),
-    Notification: pushSupported
-      ? { get permission() { return window.Notification.permission; }, requestPermission: async () => window.Notification.permission }
-      : undefined,
+    ...(pushSupported ? { Notification: notification } : {}),
     Uint8Array,
     Date,
     Promise,
-    Set,
-    Boolean,
     String,
     Number,
     Error,
-    console,
   };
-  if (!pushSupported) delete context.Notification;
-  context.window.navigator = navigator;
   vm.createContext(context);
   vm.runInContext(source, context);
 
+  const find = (label) => [...body.walk()].find((node) => node.textContent === label);
   return {
     api: context.window.GabNaiaPush,
+    requests,
     banner: () => document.querySelector(".push-banner"),
-    title: () => {
-      const banner = document.querySelector(".push-banner");
-      return banner?.children.find((child) => child.tagName === "strong")?.textContent ?? null;
-    },
-    fireInstallPrompt: () => {
-      const event = {
-        preventDefault() {},
-        prompt: async () => {},
-        userChoice: Promise.resolve({ outcome: "accepted" }),
-      };
-      (windowListeners.beforeinstallprompt || []).forEach((handler) => handler(event));
-    },
+    title: () => document.querySelector(".push-banner")?.children.find((child) => child.tagName === "strong")?.textContent ?? null,
+    find,
+    storage,
   };
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
-
-test("Android no navegador, sem avisos: oferece instalar o convite (que também ativa os avisos)", async () => {
+test("Android sem avisos: mostra \"Permitir avisos\" e ativa com um toque", async () => {
   const browser = createBrowser();
   await browser.api.mountBanner();
-  assert.equal(browser.title(), "Deseja instalar o convite?");
+  assert.equal(browser.title(), "Quer receber os avisos do casamento?");
+  await browser.find("Permitir avisos").click();
+  assert.equal(browser.title(), "Avisos ativados! 🎉");
+  assert.ok(browser.requests.some((request) => request.url === "/api/push/subscribe" && request.method === "POST"));
 });
 
-test("app instalado e avisos ativos: nenhuma faixa", async () => {
-  const browser = createBrowser({ standalone: true, permission: "granted", subscribed: true });
+test("não existe mais nada de instalar o convite", async () => {
+  const browser = createBrowser();
   await browser.api.mountBanner();
-  await settle();
+  const labels = [...browser.banner().walk()].map((node) => node.textContent);
+  assert.equal(labels.some((label) => /instal/i.test(label)), false);
+  assert.equal("promptInstall" in browser.api, false);
+});
+
+test("avisos já ativos: nenhuma faixa", async () => {
+  const browser = createBrowser({ permission: "granted", subscribed: true });
+  await browser.api.mountBanner();
   assert.equal(browser.banner(), null);
 });
 
-test("app instalado sem avisos: pede só para ativar os avisos", async () => {
-  const browser = createBrowser({ standalone: true });
+test("iPhone (navegador sem avisos de sites): nenhuma faixa", async () => {
+  const browser = createBrowser({ pushSupported: false });
   await browser.api.mountBanner();
-  assert.equal(browser.title(), "Último passo: ative os avisos");
+  assert.equal(browser.banner(), null);
 });
 
-test("avisos bloqueados: explica como desbloquear", async () => {
-  const browser = createBrowser({ standalone: true, permission: "denied" });
+test("avisos bloqueados pela pessoa: não insiste", async () => {
+  const browser = createBrowser({ permission: "denied" });
   await browser.api.mountBanner();
-  assert.equal(browser.title(), "Os avisos estão bloqueados");
+  assert.equal(browser.banner(), null);
 });
 
-test("avisos ativos no navegador: só pede instalação quando o Chrome oferece", async () => {
-  const browser = createBrowser({ permission: "granted", subscribed: true });
+test("permissão recusada na hora: explica e deixa tentar de novo", async () => {
+  const browser = createBrowser({ grantOnRequest: "denied" });
   await browser.api.mountBanner();
-  assert.equal(browser.banner(), null, "sem oferta de instalação (ex.: já instalado), nada aparece");
-  browser.fireInstallPrompt();
-  await settle();
-  assert.equal(browser.title(), "Falta só instalar o convite");
-});
-
-test("iPhone no navegador: mostra os passos de instalação do navegador em uso", async () => {
-  const browser = createBrowser({
-    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) CriOS/150 Mobile",
-    pushSupported: false,
-  });
-  await browser.api.mountBanner();
-  assert.equal(browser.title(), "Deseja instalar o convite?");
-  const install = [...browser.banner().walk()].find((node) => node.textContent === "Instalar convite");
-  await install.click();
-  const steps = [...browser.banner().walk()].find((node) => node.tagName === "ol");
-  assert.match(steps.innerHTML, /alto da tela do Chrome/);
+  await browser.find("Permitir avisos").click();
+  assert.ok(browser.find("Tentar de novo"));
+  assert.match([...browser.banner().walk()].find((node) => node.tagName === "p").textContent, /bloqueados/);
 });
 
 test("\"Agora não\" esconde a faixa por 2 dias", async () => {
-  const browser = createBrowser({ dismissedAt: Date.now() - 60_000 });
+  const browser = createBrowser();
   await browser.api.mountBanner();
+  await browser.find("Agora não").click();
   assert.equal(browser.banner(), null);
+  assert.ok(browser.storage.get("gab-naia-push-dismissed-at"));
+
+  const later = createBrowser({ dismissedAt: Date.now() - 60_000 });
+  await later.api.mountBanner();
+  assert.equal(later.banner(), null);
 });

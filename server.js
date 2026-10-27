@@ -155,10 +155,9 @@ const mimeTypes = {
   ".webp": "image/webp",
   ".mp3": "audio/mpeg",
   ".ico": "image/x-icon",
-  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
 
-const noCacheExtensions = new Set([".html", ".css", ".js", ".webmanifest"]);
+const noCacheExtensions = new Set([".html", ".css", ".js"]);
 const rangeEnabledExtensions = new Set([".mp3"]);
 const indexDocument = { content: readFileSync(new URL("./index.html", import.meta.url)), extension: ".html" };
 const stylesDocument = { content: readFileSync(new URL("./styles.css", import.meta.url)), extension: ".css" };
@@ -175,10 +174,6 @@ const supportLoginDocument = { content: readFileSync(new URL("./support-login.ht
 const supportLoginScriptDocument = { content: readFileSync(new URL("./support-login.js", import.meta.url)), extension: ".js" };
 const serviceWorkerDocument = { content: readFileSync(new URL("./sw.js", import.meta.url)), extension: ".js" };
 const pushClientDocument = { content: readFileSync(new URL("./push-client.js", import.meta.url)), extension: ".js" };
-const manifestDocument = {
-  content: readFileSync(new URL("./manifest.webmanifest", import.meta.url)),
-  extension: ".webmanifest",
-};
 const paymentSuccessDocument = {
   content: readFileSync(new URL("./pagamento/sucesso/index.html", import.meta.url)),
   extension: ".html",
@@ -207,7 +202,6 @@ const publicFiles = new Map([
   ["/album-login.js", albumLoginScriptDocument],
   ["/sw.js", serviceWorkerDocument],
   ["/push-client.js", pushClientDocument],
-  ["/manifest.webmanifest", manifestDocument],
   ["/support.css", supportStylesDocument],
   ["/support.js", supportScriptDocument],
   ["/support-login.js", supportLoginScriptDocument],

@@ -612,11 +612,13 @@ describe("avisos do navegador (web push)", () => {
     assert.equal(config.publicKey, vapid.publicKey);
     assert.equal(JSON.stringify(config).includes(vapid.privateKey), false);
 
-    for (const [path, type] of [["/sw.js", "javascript"], ["/push-client.js", "javascript"], ["/manifest.webmanifest", "manifest+json"]]) {
+    for (const path of ["/sw.js", "/push-client.js"]) {
       const response = await fetch(`${app.baseUrl}${path}`);
       assert.equal(response.status, 200, path);
-      assert.match(response.headers.get("content-type"), new RegExp(type.replace("+", "\\+")), path);
+      assert.match(response.headers.get("content-type"), /javascript/, path);
     }
+    // Sem instalação do convite como app: o manifesto não existe mais.
+    assert.equal((await fetch(`${app.baseUrl}/manifest.webmanifest`)).status, 404);
   });
 
   test("permitir avisos guarda o aparelho, ligado ao convidado quando dá para saber quem é", async () => {
