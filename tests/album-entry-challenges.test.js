@@ -1,9 +1,11 @@
 // Ponta a ponta: servidor real contra um Supabase falso em memória.
 // Cobre a entrada no álbum sem senha, a senha dos noivos e os desafios com ranking.
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import { createECDH, createHash, createHmac, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import net from "node:net";
+import webpush from "web-push";
 import { after, before, describe, test } from "node:test";
 import { createFakeSupabase } from "./helpers/fake-supabase.js";
 
@@ -46,7 +48,7 @@ async function findPort() {
   });
 }
 
-async function startApp({ supabaseUrl, openAt }) {
+async function startApp({ supabaseUrl, openAt, env = {} }) {
   const port = await findPort();
   const child = spawn(process.execPath, ["server.js"], {
     cwd: process.cwd(),
@@ -67,6 +69,10 @@ async function startApp({ supabaseUrl, openAt }) {
       SUPPORT_PANEL_GUEST_NAMES: "",
       ALBUM_PUBLIC_OPEN_AT: openAt,
       SITE_URL: "http://127.0.0.1",
+      VAPID_PUBLIC_KEY: "",
+      VAPID_PRIVATE_KEY: "",
+      NOTIFICATIONS_DISPATCH_SECRET: "",
+      ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -98,6 +104,7 @@ async function startApp({ supabaseUrl, openAt }) {
   }
 
   return {
+    baseUrl,
     call,
     async stop() {
       if (child.exitCode != null) return;
@@ -539,4 +546,165 @@ describe("álbum aberto", () => {
     assert.equal(guestBoard.leaderboard.length, coupleBoard.leaderboard.length);
     assert.ok(guestBoard.leaderboard.length > 12);
   });
+});
+
+describe("avisos do navegador (web push)", () => {
+  const vapid = webpush.generateVAPIDKeys();
+  const dispatchSecret = "segredo-do-agendador-com-mais-de-32-caracteres";
+  const pushRequests = [];
+  let pushService;
+  let pushBase;
+  let supabase;
+  let app;
+  let coupleCookie;
+
+  // Faz o papel do serviço de push do navegador (Google, Apple, Mozilla).
+  // Endereços com "saiu" respondem 410, como quando a pessoa desinstala ou bloqueia os avisos.
+  before(async () => {
+    pushService = createServer((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        pushRequests.push({ path: request.url, headers: request.headers, body: Buffer.concat(chunks) });
+        response.writeHead(request.url.includes("saiu") ? 410 : 201);
+        response.end();
+      });
+    });
+    await new Promise((resolve) => pushService.listen(0, "127.0.0.1", resolve));
+    pushBase = `http://127.0.0.1:${pushService.address().port}`;
+
+    supabase = createFakeSupabase({
+      tables: seedTables(),
+      passwords: { "Gabriel Domingues": couplePassword, "Halanaia Vitória": couplePassword },
+    });
+    app = await startApp({
+      supabaseUrl: await supabase.listen(),
+      openAt: "2099-01-01T00:00:00-03:00",
+      env: {
+        VAPID_PUBLIC_KEY: vapid.publicKey,
+        VAPID_PRIVATE_KEY: vapid.privateKey,
+        NOTIFICATIONS_DISPATCH_SECRET: dispatchSecret,
+      },
+    });
+    coupleCookie = await coupleLogin(app, "Gabriel Domingues");
+  });
+
+  after(async () => {
+    await app?.stop();
+    await supabase?.close();
+    await new Promise((resolve) => pushService?.close(resolve));
+  });
+
+  function deviceSubscription(name) {
+    const ecdh = createECDH("prime256v1");
+    ecdh.generateKeys();
+    return {
+      endpoint: `${pushBase}/push/${name}`,
+      keys: { p256dh: ecdh.getPublicKey("base64url"), auth: randomBytes(16).toString("base64url") },
+    };
+  }
+
+  const subscribe = (subscription, cookie) => app.call("/api/push/subscribe", { method: "POST", body: { subscription }, cookie });
+
+  test("o site entrega os arquivos dos avisos e a chave pública", async () => {
+    const config = (await app.call("/api/push/config")).body;
+    assert.equal(config.enabled, true);
+    assert.equal(config.publicKey, vapid.publicKey);
+    assert.equal(JSON.stringify(config).includes(vapid.privateKey), false);
+
+    for (const [path, type] of [["/sw.js", "javascript"], ["/push-client.js", "javascript"], ["/manifest.webmanifest", "manifest+json"]]) {
+      const response = await fetch(`${app.baseUrl}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.match(response.headers.get("content-type"), new RegExp(type.replace("+", "\\+")), path);
+    }
+  });
+
+  test("permitir avisos guarda o aparelho, ligado ao convidado quando dá para saber quem é", async () => {
+    const anonymous = await subscribe(deviceSubscription("anonimo"));
+    assert.equal(anonymous.status, 200);
+    assert.equal(anonymous.body.linkedToGuest, false);
+
+    const remembered = await subscribe(deviceSubscription("joice"), rememberCookie());
+    assert.equal(remembered.body.linkedToGuest, true);
+    const joiceRow = supabase.state.push_subscriptions.find((row) => row.endpoint.endsWith("/joice"));
+    assert.equal(joiceRow.guest_key, "joice de paula silva");
+
+    // Permitir de novo no mesmo aparelho atualiza a inscrição em vez de duplicar.
+    await subscribe({ ...deviceSubscription("joice"), endpoint: joiceRow.endpoint }, rememberCookie());
+    assert.equal(supabase.state.push_subscriptions.filter((row) => row.endpoint === joiceRow.endpoint).length, 1);
+
+    const invalid = await subscribe({ endpoint: "http://site-estranho.example/push", keys: { p256dh: "x", auth: "y" } });
+    assert.equal(invalid.status, 400);
+  });
+
+  test("os noivos enviam um aviso agora; ele chega criptografado e aparelhos que saíram são desativados", async () => {
+    await subscribe(deviceSubscription("saiu-do-site"));
+    const before = pushRequests.length;
+    const active = supabase.state.push_subscriptions.filter((row) => !row.disabled_at).length;
+
+    // Só os noivos enviam avisos.
+    const forbidden = await app.call("/api/notifications", { method: "POST", body: { title: "Oi", body: "Teste" } });
+    assert.equal(forbidden.status, 401);
+
+    const sent = await app.call("/api/notifications", {
+      method: "POST",
+      body: { title: "Hora da valsa! 💃", body: "Registre do seu lugar, sem flash." },
+      cookie: coupleCookie,
+    });
+    assert.equal(sent.status, 201, JSON.stringify(sent.body));
+    assert.deepEqual(sent.body.dispatch, { sent: active - 1, notifications: 1 });
+
+    const delivered = pushRequests.slice(before);
+    assert.equal(delivered.length, active);
+    for (const request of delivered) {
+      assert.equal(request.headers["content-encoding"], "aes128gcm");
+      assert.match(request.headers.authorization, /^vapid t=.+, k=/);
+      assert.equal(request.body.includes("Hora da valsa"), false, "o conteúdo vai criptografado");
+    }
+    const gone = supabase.state.push_subscriptions.find((row) => row.endpoint.endsWith("/saiu-do-site"));
+    assert.ok(gone.disabled_at, "aparelho que respondeu 410 fica desativado");
+    const notification = supabase.state.album_notifications.find((row) => row.title === "Hora da valsa! 💃");
+    assert.ok(notification.sent_at);
+    assert.equal(notification.sent_count, active - 1);
+    assert.equal(notification.failed_count, 1);
+  });
+
+  test("aviso agendado só sai quando chega a hora, e o agendador precisa da chave", async () => {
+    const scheduled = await app.call("/api/notifications", {
+      method: "POST",
+      body: { title: "Daqui a pouco", body: "Aviso agendado", sendAt: "2099-01-01T12:00:00-03:00" },
+      cookie: coupleCookie,
+    });
+    assert.equal(scheduled.status, 201);
+    assert.equal(scheduled.body.dispatch, null);
+
+    const noKey = await fetch(`${app.baseUrl}/api/notifications/dispatch`, { method: "POST" });
+    assert.equal(noKey.status, 401);
+
+    const before = pushRequests.length;
+    const early = await dispatch();
+    assert.deepEqual(early, { sent: 0, notifications: 0 });
+    assert.equal(pushRequests.length, before);
+
+    // Chegou a hora: o agendador envia, e uma segunda chamada não repete o envio.
+    supabase.state.album_notifications.find((row) => row.title === "Daqui a pouco").send_at = new Date(Date.now() - 1000).toISOString();
+    const due = await dispatch();
+    assert.equal(due.notifications, 1);
+    assert.ok(due.sent >= 1);
+    const again = await dispatch();
+    assert.deepEqual(again, { sent: 0, notifications: 0 });
+
+    const list = await app.call("/api/notifications", { cookie: coupleCookie });
+    assert.equal(list.status, 200);
+    assert.ok(list.body.subscribers >= 2);
+  });
+
+  async function dispatch() {
+    const response = await fetch(`${app.baseUrl}/api/notifications/dispatch`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${dispatchSecret}` },
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  }
 });

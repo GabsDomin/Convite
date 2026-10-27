@@ -6,6 +6,7 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import webpush from "web-push";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(__dirname);
@@ -101,6 +102,12 @@ const supportPanelGuestNames = parseGuestNameList(
 );
 const albumPublicOpenAtRaw = firstEnv("ALBUM_PUBLIC_OPEN_AT") || "2026-11-28T15:00:00-03:00";
 const albumPublicOpenAtMs = Date.parse(albumPublicOpenAtRaw);
+// Avisos do navegador (web push): chaves VAPID e a chave que o agendador usa para pedir o envio.
+const vapidPublicKey = firstEnv("VAPID_PUBLIC_KEY");
+const vapidPrivateKey = firstEnv("VAPID_PRIVATE_KEY");
+const vapidSubject = firstEnv("VAPID_SUBJECT") || "https://gab-naia.online";
+const notificationsDispatchSecret = firstEnv("NOTIFICATIONS_DISPATCH_SECRET");
+const hasPushConfig = Boolean(vapidPublicKey && vapidPrivateKey);
 const albumTestHosts = new Set(
   (firstEnv("ALBUM_TEST_HOSTS") || "gab-naia-teste.vercel.app")
     .split(",")
@@ -148,9 +155,10 @@ const mimeTypes = {
   ".webp": "image/webp",
   ".mp3": "audio/mpeg",
   ".ico": "image/x-icon",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
 
-const noCacheExtensions = new Set([".html", ".css", ".js"]);
+const noCacheExtensions = new Set([".html", ".css", ".js", ".webmanifest"]);
 const rangeEnabledExtensions = new Set([".mp3"]);
 const indexDocument = { content: readFileSync(new URL("./index.html", import.meta.url)), extension: ".html" };
 const stylesDocument = { content: readFileSync(new URL("./styles.css", import.meta.url)), extension: ".css" };
@@ -165,6 +173,12 @@ const supportStylesDocument = { content: readFileSync(new URL("./support.css", i
 const supportScriptDocument = { content: readFileSync(new URL("./support.js", import.meta.url)), extension: ".js" };
 const supportLoginDocument = { content: readFileSync(new URL("./support-login.html", import.meta.url)), extension: ".html" };
 const supportLoginScriptDocument = { content: readFileSync(new URL("./support-login.js", import.meta.url)), extension: ".js" };
+const serviceWorkerDocument = { content: readFileSync(new URL("./sw.js", import.meta.url)), extension: ".js" };
+const pushClientDocument = { content: readFileSync(new URL("./push-client.js", import.meta.url)), extension: ".js" };
+const manifestDocument = {
+  content: readFileSync(new URL("./manifest.webmanifest", import.meta.url)),
+  extension: ".webmanifest",
+};
 const paymentSuccessDocument = {
   content: readFileSync(new URL("./pagamento/sucesso/index.html", import.meta.url)),
   extension: ".html",
@@ -191,6 +205,9 @@ const publicFiles = new Map([
   ["/album/login/", albumLoginDocument],
   ["/album-login.html", albumLoginDocument],
   ["/album-login.js", albumLoginScriptDocument],
+  ["/sw.js", serviceWorkerDocument],
+  ["/push-client.js", pushClientDocument],
+  ["/manifest.webmanifest", manifestDocument],
   ["/support.css", supportStylesDocument],
   ["/support.js", supportScriptDocument],
   ["/support-login.js", supportLoginScriptDocument],
@@ -2278,6 +2295,147 @@ function requireAlbumPublicEntry(guestName) {
   }
 }
 
+async function upsertSupabaseTable(path, payload, onConflict) {
+  const endpoint = new URL(`/rest/v1/${path}?on_conflict=${encodeURIComponent(onConflict)}`, supabaseUrl);
+  const supabaseResponse = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Prefer": "resolution=merge-duplicates,return=representation",
+      ...getSupabaseHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const responseText = await supabaseResponse.text();
+  const data = responseText ? JSON.parse(responseText) : null;
+  if (!supabaseResponse.ok) {
+    throw new Error(data?.message || data?.error_description || data?.hint || "Erro ao salvar no Supabase.");
+  }
+  return data;
+}
+
+function requirePushSubscription(value) {
+  const endpoint = String(value?.endpoint || "").trim();
+  const p256dh = String(value?.keys?.p256dh || "").trim();
+  const auth = String(value?.keys?.auth || "").trim();
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new HttpError(400, "Inscrição de avisos inválida.");
+  }
+  // Serviços de push reais usam https; http só é aceito para o servidor local dos testes.
+  const localTestEndpoint = url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !localTestEndpoint) || endpoint.length > 1000) {
+    throw new HttpError(400, "Inscrição de avisos inválida.");
+  }
+  if (!/^[A-Za-z0-9_-]{40,200}$/.test(p256dh) || !/^[A-Za-z0-9_-]{8,100}$/.test(auth)) {
+    throw new HttpError(400, "Inscrição de avisos inválida.");
+  }
+  return { endpoint, p256dh, auth };
+}
+
+function requireNotificationInput(body) {
+  const title = requireText(body.title, "Título do aviso", { min: 2, max: 80 });
+  const message = requireText(body.body, "Texto do aviso", { min: 2, max: 240 });
+  const url = String(body.url || "/album").trim();
+  if (!/^\/[A-Za-z0-9/_#?=&.-]*$/.test(url) || url.length > 200) throw new HttpError(400, "Link do aviso inválido.");
+  let sendAt = new Date();
+  if (body.sendAt) {
+    sendAt = new Date(String(body.sendAt));
+    if (Number.isNaN(sendAt.getTime())) throw new HttpError(400, "Horário do aviso inválido.");
+  }
+  return { title, body: message, url, send_at: sendAt.toISOString() };
+}
+
+// Monta o aviso criptografado (web-push) e envia com fetch, para controlar o tempo de espera.
+async function sendPushNotification(subscription, payload) {
+  const details = webpush.generateRequestDetails(
+    { endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } },
+    JSON.stringify(payload),
+    {
+      vapidDetails: { subject: vapidSubject, publicKey: vapidPublicKey, privateKey: vapidPrivateKey },
+      TTL: 6 * 60 * 60,
+      urgency: "high",
+    },
+  );
+  const response = await fetch(details.endpoint, {
+    method: details.method,
+    headers: details.headers,
+    body: details.body,
+    signal: AbortSignal.timeout(8_000),
+  });
+  return response.status;
+}
+
+async function readNotificationSubscribers(notification) {
+  const filter = notification.audience === "guest"
+    ? `&guest_key=eq.${encodeURIComponent(notification.guest_key)}`
+    : "";
+  return readSupabaseTableAll(
+    `push_subscriptions?select=id,endpoint,p256dh,auth&disabled_at=is.null${filter}&order=id.asc`,
+  );
+}
+
+// Envia os avisos cujo horário já chegou. Cada aviso é "reservado" antes do envio (sent_at),
+// para que duas execuções ao mesmo tempo não mandem o mesmo aviso duas vezes.
+async function dispatchDueNotifications({ limit = 10 } = {}) {
+  if (!hasPushConfig) return { sent: 0, notifications: 0, skipped: "push-not-configured" };
+  const now = new Date().toISOString();
+  const due = await readSupabaseTable(
+    `album_notifications?select=*&sent_at=is.null&send_at=lte.${encodeURIComponent(now)}&order=send_at.asc&limit=${limit}`,
+  );
+  let delivered = 0;
+  let handled = 0;
+  for (const notification of Array.isArray(due) ? due : []) {
+    const claimed = await patchSupabaseTable(
+      `album_notifications?id=eq.${encodeURIComponent(notification.id)}&sent_at=is.null`,
+      { sent_at: new Date().toISOString() },
+    );
+    if (!claimed?.[0]) continue;
+    handled += 1;
+
+    const subscribers = await readNotificationSubscribers(notification);
+    const payload = { title: notification.title, body: notification.body, url: notification.url, tag: notification.id };
+    let ok = 0;
+    let failed = 0;
+    for (let start = 0; start < subscribers.length; start += 20) {
+      const batch = subscribers.slice(start, start + 20);
+      const results = await Promise.allSettled(batch.map((subscriber) => sendPushNotification(subscriber, payload)));
+      await Promise.all(results.map(async (result, index) => {
+        const status = result.status === "fulfilled" ? result.value : 0;
+        if (status >= 200 && status < 300) {
+          ok += 1;
+          return;
+        }
+        failed += 1;
+        // 404/410: o aparelho cancelou a inscrição; não adianta tentar de novo.
+        if (status === 404 || status === 410) {
+          await patchSupabaseTable(
+            `push_subscriptions?id=eq.${encodeURIComponent(batch[index].id)}`,
+            { disabled_at: new Date().toISOString() },
+          ).catch(() => {});
+        }
+      }));
+    }
+    delivered += ok;
+    await patchSupabaseTable(
+      `album_notifications?id=eq.${encodeURIComponent(notification.id)}`,
+      { sent_count: ok, failed_count: failed },
+    ).catch(() => {});
+  }
+  return { sent: delivered, notifications: handled };
+}
+
+function requireDispatchSecret(request) {
+  const expected = Buffer.from(notificationsDispatchSecret, "utf8");
+  const header = String(request.headers.authorization || "");
+  const received = Buffer.from(header.startsWith("Bearer ") ? header.slice(7) : "", "utf8");
+  if (expected.length < 32 || received.length !== expected.length || !timingSafeEqual(received, expected)) {
+    throw new HttpError(401, "Não autorizado.");
+  }
+}
+
 async function deleteAlbumMediaRecord(mediaId) {
   const rows = await deleteSupabaseTable(`album_media?id=eq.${encodeURIComponent(mediaId)}`);
   const deleted = Array.isArray(rows) ? rows[0] : rows;
@@ -2689,6 +2847,78 @@ async function handleApi(request, response, pathname) {
       sendJson(response, 200, { ok: true, guestName, isAlbumAdmin: false }, {
         "Set-Cookie": albumSessionCookieHeader(createAlbumSessionToken(guestName)),
       });
+      return true;
+    }
+
+    if (request.method === "GET" && pathname === "/api/push/config") {
+      sendJson(response, 200, {
+        enabled: hasPushConfig && hasSupabaseConfig,
+        publicKey: hasPushConfig ? vapidPublicKey : null,
+      });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/push/subscribe") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "push-subscribe", 20, 10 * 60_000);
+      if (!hasPushConfig || !hasSupabaseConfig) throw new HttpError(503, "Os avisos ainda não estão disponíveis.");
+      const body = await readJsonBody(request);
+      const subscription = requirePushSubscription(body.subscription);
+      // Liga o aparelho ao convidado quando dá para saber quem é (sessão do álbum ou confirmação lembrada).
+      const albumSession = readAlbumSession(request);
+      const guestName = albumSession?.guestName || (await readRememberedAlbumGuests(request))[0] || null;
+      await upsertSupabaseTable("push_subscriptions", {
+        ...subscription,
+        ...(guestName ? { guest_name: guestName, guest_key: normalizeGuestName(guestName) } : {}),
+        user_agent: String(request.headers["user-agent"] || "").slice(0, 200),
+        disabled_at: null,
+        failure_count: 0,
+        last_seen_at: new Date().toISOString(),
+      }, "endpoint");
+      sendJson(response, 200, { ok: true, linkedToGuest: Boolean(guestName) });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/push/unsubscribe") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "push-unsubscribe", 20, 10 * 60_000);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Os avisos ainda não estão disponíveis.");
+      const endpoint = requireText((await readJsonBody(request)).endpoint, "Endereço", { min: 10, max: 1000 });
+      await patchSupabaseTable(
+        `push_subscriptions?endpoint=eq.${encodeURIComponent(endpoint)}`,
+        { disabled_at: new Date().toISOString() },
+      );
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/notifications/dispatch") {
+      requireDispatchSecret(request);
+      sendJson(response, 200, await dispatchDueNotifications());
+      return true;
+    }
+
+    if (pathname === "/api/notifications" && (request.method === "GET" || request.method === "POST")) {
+      const session = requireAlbumSession(request);
+      requireAlbumAdmin(session);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Supabase não está configurado no servidor.");
+
+      if (request.method === "GET") {
+        const [notifications, subscribers] = await Promise.all([
+          readSupabaseTable("album_notifications?select=*&order=send_at.desc&limit=100"),
+          countSupabaseRows("push_subscriptions?select=id&disabled_at=is.null"),
+        ]);
+        sendJson(response, 200, { notifications, subscribers, pushEnabled: hasPushConfig });
+        return true;
+      }
+
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "notifications-create", 30, 10 * 60_000);
+      const input = requireNotificationInput(await readJsonBody(request));
+      const inserted = await insertSupabaseTable("album_notifications", { ...input, audience: "all", kind: "manual" });
+      // Aviso para agora sai na hora; os agendados ficam para o agendador.
+      const result = Date.parse(input.send_at) <= Date.now() ? await dispatchDueNotifications() : null;
+      sendJson(response, 201, { notification: inserted?.[0] || null, dispatch: result });
       return true;
     }
 

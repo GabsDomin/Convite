@@ -22,6 +22,8 @@ export function createFakeSupabase({ tables = {}, passwords = {}, maxRows = 1000
     restricted_guests: [],
     rsvp_remember_tokens: [],
     album_challenge_assignments: [],
+    push_subscriptions: [],
+    album_notifications: [],
     ...structuredClone(tables),
   };
   let clock = Date.parse("2026-11-28T18:00:00Z");
@@ -30,14 +32,17 @@ export function createFakeSupabase({ tables = {}, passwords = {}, maxRows = 1000
   const uniqueColumns = {
     album_guests: ["normalized_guest_name"],
     album_media: ["content_hash", "storage_key"],
+    push_subscriptions: ["endpoint"],
   };
 
   function matches(row, params) {
     for (const [column, raw] of params) {
-      if (["select", "order", "limit", "offset"].includes(column)) continue;
+      if (["select", "order", "limit", "offset", "on_conflict"].includes(column)) continue;
       if (raw.startsWith("eq.")) {
         const expected = raw.slice(3);
         if (String(row[column] ?? "") !== expected) return false;
+      } else if (raw.startsWith("lte.")) {
+        if (!(String(row[column] ?? "") <= raw.slice(4))) return false;
       } else if (raw === "not.is.null") {
         if (row[column] == null) return false;
       } else if (raw === "is.null") {
@@ -65,6 +70,16 @@ export function createFakeSupabase({ tables = {}, passwords = {}, maxRows = 1000
     if (table === "album_challenge_assignments") {
       row.active ??= true;
       row.swapped ??= false;
+    }
+    if (table === "album_notifications") {
+      row.send_at ??= new Date().toISOString();
+      row.sent_at ??= null;
+      row.sent_count ??= 0;
+      row.failed_count ??= 0;
+    }
+    if (table === "push_subscriptions") {
+      row.disabled_at ??= null;
+      row.guest_key ??= null;
     }
     if (table === "album_media") row.challenge_id ??= null;
     for (const column of uniqueColumns[table] || []) {
@@ -165,12 +180,22 @@ export function createFakeSupabase({ tables = {}, passwords = {}, maxRows = 1000
       // Como no Supabase: no máximo 1000 linhas por consulta, mesmo pedindo mais.
       const offset = Number(url.searchParams.get("offset")) || 0;
       const limit = Math.min(Number(url.searchParams.get("limit")) || maxRows, maxRows);
-      const rows = state[table].filter((row) => matches(row, params)).slice(offset, offset + limit);
+      const filtered = state[table].filter((row) => matches(row, params));
+      const rows = filtered.slice(offset, offset + limit);
+      response.setHeader("Content-Range", `${offset}-${offset + Math.max(rows.length - 1, 0)}/${filtered.length}`);
       return send(response, 200, rows);
     }
     if (request.method === "POST") {
       const inserted = [];
+      const onConflict = url.searchParams.get("on_conflict");
       for (const payload of Array.isArray(body) ? body : [body]) {
+        // Upsert do PostgREST (Prefer: resolution=merge-duplicates): atualiza a linha existente.
+        const existing = onConflict && state[table].find((row) => row[onConflict] === payload[onConflict]);
+        if (existing) {
+          Object.assign(existing, payload);
+          inserted.push(existing);
+          continue;
+        }
         const { row, conflict } = prepareRow(table, payload);
         if (conflict) {
           return send(response, 409, { message: `duplicate key value violates unique constraint "${table}_${conflict}_key"` });

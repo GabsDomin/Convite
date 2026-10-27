@@ -1,0 +1,13 @@
+{
+  "name": "Gabriel & Halanaia",
+  "short_name": "G & H",
+  "description": "Convite e álbum coletivo do casamento de Gabriel e Halanaia.",
+  "start_url": "/album",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fffdfb",
+  "theme_color": "#003f98",
+  "icons": [
+    { "src": "/assets/favicon.png", "sizes": "500x500", "type": "image/png", "purpose": "any" }
+  ]
+}
