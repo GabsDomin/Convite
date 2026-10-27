@@ -51,6 +51,24 @@ const uploadProgressBar = document.querySelector("[data-upload-progress-bar]");
 const uploadSubmitButton = document.querySelector("[data-upload-submit]");
 const uploadUser = document.querySelector("[data-upload-user]");
 const uploadUserName = document.querySelector("[data-upload-user-name]");
+const uploadChallengeField = document.querySelector("[data-upload-challenge-field]");
+const uploadChallengeSelect = document.querySelector("[data-upload-challenge]");
+const challengesSection = document.querySelector("[data-challenges-section]");
+const challengesList = document.querySelector("[data-challenges-list]");
+const challengesScore = document.querySelector("[data-challenges-score]");
+const rankingList = document.querySelector("[data-ranking-list]");
+const rankingEmpty = document.querySelector("[data-ranking-empty]");
+const rankingMe = document.querySelector("[data-ranking-me]");
+const newChallengeButton = document.querySelector("[data-new-challenge]");
+const mobileChallengesLink = document.querySelector("[data-mobile-challenges]");
+const challengeDialog = document.querySelector("[data-challenge-dialog]");
+const challengeForm = document.querySelector("[data-challenge-form]");
+const challengeDialogTitle = document.querySelector("[data-challenge-dialog-title]");
+const challengeError = document.querySelector("[data-challenge-error]");
+const challengeDeleteButton = document.querySelector("[data-delete-challenge]");
+const challengeToggleButton = document.querySelector("[data-toggle-challenge]");
+const challengeSaveButton = document.querySelector("[data-save-challenge]");
+const lightboxUnlinkButton = document.querySelector("[data-unlink-challenge]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
@@ -63,6 +81,10 @@ let albumIsAdmin = false;
 let albumSessionGuestName = "";
 const knownAlbumContentHashes = new Set();
 let activeLightboxMediaId = null;
+let activeLightboxChallengeId = null;
+const challengeById = new Map();
+let editingChallengeId = null;
+let activeUploadChallengeId = "";
 let activeStoryPerson = "";
 let activeStoryIndex = 0;
 let storyTimer;
@@ -844,6 +866,11 @@ function openUploadDialog() {
   window.setTimeout(() => uploadForm.elements.category?.focus(), 0);
 }
 
+function openUploadForChallenge(challengeId) {
+  openUploadDialog();
+  if (uploadChallengeSelect) uploadChallengeSelect.value = challengeId;
+}
+
 let activeLightboxDownload = null;
 
 function closeLightbox() {
@@ -853,6 +880,11 @@ function closeLightbox() {
   lightboxCaption.replaceChildren();
   activeLightboxDownload = null;
   activeLightboxMediaId = null;
+  activeLightboxChallengeId = null;
+  if (lightboxUnlinkButton) {
+    lightboxUnlinkButton.hidden = true;
+    lightboxUnlinkButton.disabled = false;
+  }
   if (lightboxDownloadButton) {
     lightboxDownloadButton.hidden = true;
     lightboxDownloadButton.disabled = false;
@@ -921,7 +953,7 @@ async function downloadMediaFile({ url, type, guestName, category, fileName }) {
   }
 }
 
-function openLightbox({ url, type, guestName, category, originalUrl, mediaId }) {
+function openLightbox({ url, type, guestName, category, originalUrl, mediaId, challengeId }) {
   lightboxMedia.replaceChildren();
   lightboxCaption.replaceChildren();
 
@@ -942,10 +974,22 @@ function openLightbox({ url, type, guestName, category, originalUrl, mediaId }) 
   const name = document.createElement("strong");
   name.textContent = guestName;
   caption.append("Compartilhada por ", name, ` · ${category}`);
+  const challenge = challengeId ? challengeById.get(challengeId) : null;
+  if (challenge) {
+    const challengeLabel = document.createElement("span");
+    challengeLabel.className = "lightbox-challenge";
+    challengeLabel.textContent = `Desafio: ${challenge.title}`;
+    caption.append(challengeLabel);
+  }
 
   lightboxMedia.append(media);
   lightboxCaption.append(caption);
   activeLightboxMediaId = mediaId || null;
+  activeLightboxChallengeId = challenge ? challengeId : null;
+  if (lightboxUnlinkButton) {
+    lightboxUnlinkButton.hidden = !albumIsAdmin || !mediaId || !challenge;
+    lightboxUnlinkButton.disabled = false;
+  }
   activeLightboxDownload = {
     url: downloadUrl,
     type,
@@ -1334,6 +1378,7 @@ function openMemoryLightbox(entry) {
     guestName: entry.guestName,
     category: entry.category,
     mediaId: entry.id,
+    challengeId: entry.challengeId,
   });
 }
 
@@ -1638,6 +1683,7 @@ async function reloadAlbumGallery() {
       displayUrl: media.displayUrl,
       originalUrl: media.originalUrl,
       type: media.mimeType,
+      challengeId: media.challengeId || null,
       createdAt: media.createdAt,
     }));
     addMemoriesToGallery(entries, { prepend: false });
@@ -1688,6 +1734,7 @@ async function initializeAlbumStorage() {
       displayUrl: media.displayUrl,
       originalUrl: media.originalUrl,
       type: media.mimeType,
+      challengeId: media.challengeId || null,
       createdAt: media.createdAt,
     }));
     storyGroups.clear();
@@ -1759,6 +1806,7 @@ async function persistAlbumFile(file, guestName, category, onProgress, contentHa
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       category,
+      challengeId: activeUploadChallengeId || null,
       contentHash: hash,
       fileName: file.name,
       fileType: file.type,
@@ -1782,6 +1830,7 @@ async function persistAlbumFile(file, guestName, category, onProgress, contentHa
     displayUrl: registered.media.displayUrl,
     originalUrl: registered.media.originalUrl,
     type: registered.media.mimeType,
+    challengeId: registered.media.challengeId || null,
     createdAt: registered.media.createdAt,
     contentHash: hash,
     file,
@@ -1948,13 +1997,16 @@ uploadForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  const category = String(new FormData(uploadForm).get("category") || "");
+  const formData = new FormData(uploadForm);
+  const category = String(formData.get("category") || "");
+  activeUploadChallengeId = String(formData.get("challengeId") || "");
 
   let entries;
   if (albumStorageConfigured) {
     const { uploaded, failed } = await uploadPendingFiles(files, albumSessionGuestName, category);
     entries = uploaded;
     renderSelectedFiles();
+    if (activeUploadChallengeId && uploaded.length) loadChallenges();
 
     if (failed.length) {
       if (entries.length) addMemoriesToGallery(entries);
@@ -2019,6 +2071,253 @@ renderStories();
 updateGalleryVisibility();
 scheduleHeroRotation();
 
+function formatChallengePoints(points) {
+  return `${points} ${points === 1 ? "ponto" : "pontos"}`;
+}
+
+function populateUploadChallenges(challenges) {
+  if (!uploadChallengeSelect || !uploadChallengeField) return;
+  const previousValue = uploadChallengeSelect.value;
+  const openChallenges = challenges.filter((challenge) => challenge.active);
+  uploadChallengeSelect.replaceChildren(new Option("Nenhum, só quero compartilhar", ""));
+  openChallenges.forEach((challenge) => {
+    const label = `${challenge.title} · ${formatChallengePoints(challenge.points)}${challenge.completedByMe ? " ✓" : ""}`;
+    uploadChallengeSelect.append(new Option(label, challenge.id));
+  });
+  uploadChallengeSelect.value = openChallenges.some((challenge) => challenge.id === previousValue) ? previousValue : "";
+  uploadChallengeField.hidden = !openChallenges.length;
+}
+
+function createChallengeCard(challenge) {
+  const card = document.createElement("article");
+  card.className = "challenge-card";
+  card.setAttribute("role", "listitem");
+  card.classList.toggle("is-done", challenge.completedByMe);
+  card.classList.toggle("is-closed", !challenge.active);
+
+  const top = document.createElement("div");
+  top.className = "challenge-card-top";
+  const title = document.createElement("h3");
+  title.textContent = challenge.title;
+  const points = document.createElement("span");
+  points.className = "challenge-points";
+  points.textContent = formatChallengePoints(challenge.points);
+  top.append(title, points);
+
+  const description = document.createElement("p");
+  description.textContent = challenge.description;
+
+  const footer = document.createElement("div");
+  footer.className = "challenge-card-footer";
+  const status = document.createElement("span");
+  status.className = "challenge-status";
+  if (challenge.completedByMe) status.textContent = "✓ Você completou";
+  else if (!challenge.active) status.textContent = "Encerrado";
+  else if (challenge.completedCount) {
+    status.textContent = `${challenge.completedCount} ${challenge.completedCount === 1 ? "pessoa completou" : "pessoas completaram"}`;
+  } else status.textContent = "Ninguém completou ainda";
+  footer.append(status);
+
+  if (challenge.active) {
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = `button compact ${challenge.completedByMe ? "secondary" : "primary"}`;
+    action.textContent = challenge.completedByMe ? "Enviar outra" : "Fazer desafio";
+    action.addEventListener("click", () => openUploadForChallenge(challenge.id));
+    footer.append(action);
+  }
+
+  if (albumIsAdmin) {
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "button ghost compact";
+    edit.textContent = "Editar";
+    edit.addEventListener("click", () => openChallengeEditor(challenge));
+    footer.append(edit);
+  }
+
+  card.append(top);
+  if (challenge.description) card.append(description);
+  card.append(footer);
+  return card;
+}
+
+function renderRanking(board) {
+  const viewerKey = albumSessionGuestName.trim().toLowerCase();
+  rankingList.replaceChildren(...board.leaderboard.map((entry) => {
+    const item = document.createElement("li");
+    item.classList.toggle("is-me", entry.guestName.trim().toLowerCase() === viewerKey);
+    const position = document.createElement("span");
+    position.className = "ranking-position";
+    position.textContent = `${entry.rank}º`;
+    const name = document.createElement("span");
+    name.className = "ranking-name";
+    name.textContent = entry.guestName;
+    name.title = `${entry.completed} ${entry.completed === 1 ? "desafio" : "desafios"}`;
+    if (entry.withoutRsvp) {
+      const flag = document.createElement("small");
+      flag.className = "ranking-flag";
+      flag.textContent = " · sem confirmação";
+      name.append(flag);
+      name.title += " · entrou pelo \"Não achei meu nome\"";
+    }
+    const points = document.createElement("span");
+    points.className = "ranking-points";
+    points.textContent = formatChallengePoints(entry.points);
+    item.append(position, name, points);
+    return item;
+  }));
+  rankingEmpty.hidden = board.leaderboard.length > 0;
+
+  const { me } = board;
+  const meIsListed = board.leaderboard.some((entry) => entry.rank === me.rank);
+  if (albumIsAdmin) {
+    rankingMe.hidden = false;
+    rankingMe.textContent = "Você vê o ranking completo. Os convidados veem só os 10 primeiros e a própria posição.";
+  } else if (!me.points) {
+    rankingMe.hidden = board.leaderboard.length === 0;
+    rankingMe.textContent = "Complete um desafio para entrar no ranking.";
+  } else {
+    rankingMe.hidden = meIsListed;
+    rankingMe.textContent = `Você está em ${me.rank}º lugar com ${formatChallengePoints(me.points)}.`;
+  }
+}
+
+function renderChallenges(board) {
+  challengeById.clear();
+  board.challenges.forEach((challenge) => challengeById.set(challenge.id, challenge));
+
+  const hasChallenges = board.challenges.length > 0;
+  challengesSection.hidden = !hasChallenges && !albumIsAdmin;
+  if (mobileChallengesLink) mobileChallengesLink.hidden = challengesSection.hidden;
+  newChallengeButton.hidden = !albumIsAdmin;
+
+  challengesList.replaceChildren(...board.challenges.map(createChallengeCard));
+  challengesScore.replaceChildren();
+  const score = document.createElement("strong");
+  score.textContent = String(board.me.points);
+  challengesScore.append(score, `de ${board.totalPoints} pontos`);
+  if (board.me.rank) challengesScore.append(` · ${board.me.rank}º lugar`);
+
+  renderRanking(board);
+  populateUploadChallenges(board.challenges);
+}
+
+async function loadChallenges() {
+  try {
+    renderChallenges(await requestAlbumJson("/api/album/challenges"));
+  } catch {
+    // Sem desafios disponíveis (ex.: migração pendente), o álbum segue normal.
+  }
+}
+
+function showChallengeError(message = "") {
+  challengeError.textContent = message;
+  challengeError.hidden = !message;
+}
+
+function openChallengeEditor(challenge = null) {
+  editingChallengeId = challenge?.id || null;
+  challengeForm.reset();
+  showChallengeError();
+  challengeDialogTitle.textContent = challenge ? "Editar desafio" : "Novo desafio";
+  challengeForm.elements.title.value = challenge?.title || "";
+  challengeForm.elements.description.value = challenge?.description || "";
+  challengeForm.elements.points.value = String(challenge?.points || 1);
+  challengeDeleteButton.hidden = !challenge;
+  challengeToggleButton.hidden = !challenge;
+  challengeToggleButton.textContent = challenge?.active === false ? "Reabrir" : "Encerrar";
+  if (!challengeDialog.open) challengeDialog.showModal();
+  window.setTimeout(() => challengeForm.elements.title.focus(), 0);
+}
+
+function closeChallengeEditor() {
+  if (challengeDialog.open) challengeDialog.close();
+  editingChallengeId = null;
+}
+
+async function saveChallenge(payload, successMessage) {
+  const url = editingChallengeId ? `/api/album/challenges/${editingChallengeId}` : "/api/album/challenges";
+  await requestAlbumJson(url, {
+    method: editingChallengeId ? "PATCH" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  closeChallengeEditor();
+  await loadChallenges();
+  showToast(successMessage);
+}
+
+async function runChallengeAction(button, action) {
+  showChallengeError();
+  button.disabled = true;
+  try {
+    await action();
+  } catch (error) {
+    showChallengeError(error.message || "Não foi possível salvar o desafio.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+challengeForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const formData = new FormData(challengeForm);
+  runChallengeAction(challengeSaveButton, () => saveChallenge({
+    title: String(formData.get("title") || ""),
+    description: String(formData.get("description") || ""),
+    points: Number(formData.get("points") || 1),
+  }, editingChallengeId ? "Desafio atualizado." : "Desafio criado."));
+});
+
+challengeToggleButton?.addEventListener("click", () => {
+  const challenge = challengeById.get(editingChallengeId);
+  if (!challenge) return;
+  runChallengeAction(challengeToggleButton, () => saveChallenge(
+    { active: !challenge.active },
+    challenge.active ? "Desafio encerrado. Os pontos já conquistados continuam valendo." : "Desafio reaberto.",
+  ));
+});
+
+challengeDeleteButton?.addEventListener("click", () => {
+  if (!editingChallengeId) return;
+  if (!window.confirm("Excluir este desafio? As fotos continuam no álbum, mas deixam de contar pontos.")) return;
+  runChallengeAction(challengeDeleteButton, async () => {
+    await requestAlbumJson(`/api/album/challenges/${editingChallengeId}`, { method: "DELETE" });
+    closeChallengeEditor();
+    await Promise.all([loadChallenges(), reloadAlbumGallery()]);
+    showToast("Desafio excluído.");
+  });
+});
+
+document.querySelectorAll("[data-close-challenge]").forEach((button) => {
+  button.addEventListener("click", closeChallengeEditor);
+});
+challengeDialog?.addEventListener("click", (event) => {
+  if (event.target === challengeDialog) closeChallengeEditor();
+});
+newChallengeButton?.addEventListener("click", () => openChallengeEditor());
+
+lightboxUnlinkButton?.addEventListener("click", async () => {
+  if (!albumIsAdmin || !activeLightboxMediaId || !activeLightboxChallengeId) return;
+  const challenge = challengeById.get(activeLightboxChallengeId);
+  if (!window.confirm(`Tirar esta memória do desafio "${challenge?.title || ""}"? Ela continua no álbum.`)) return;
+  lightboxUnlinkButton.disabled = true;
+  try {
+    await requestAlbumJson(`/api/album/media/${activeLightboxMediaId}/challenge`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challengeId: null }),
+    });
+    closeLightbox();
+    await Promise.all([loadChallenges(), reloadAlbumGallery()]);
+    showToast("A memória não conta mais para o desafio.");
+  } catch (error) {
+    lightboxUnlinkButton.disabled = false;
+    showToast(error.message || "Não foi possível atualizar o desafio.");
+  }
+});
+
 async function ensureAlbumSession() {
   const logoutButton = document.querySelector("[data-album-logout]");
   try {
@@ -2035,7 +2334,7 @@ async function ensureAlbumSession() {
       logoutButton.hidden = false;
       logoutButton.addEventListener("click", async () => {
         await fetch("/api/album/logout", { method: "POST", credentials: "same-origin" });
-        window.location.replace("/album/login");
+        window.location.replace("/album/login?trocar=1");
       });
     }
     return true;
@@ -2046,5 +2345,7 @@ async function ensureAlbumSession() {
 }
 
 ensureAlbumSession().then((ok) => {
-  if (ok) initializeAlbumStorage();
+  if (!ok) return;
+  initializeAlbumStorage();
+  loadChallenges();
 });

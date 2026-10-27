@@ -12,7 +12,7 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/png" href="/assets/favicon.png" />
-    <link rel="stylesheet" href="/album.css?v=20260722-4" />
+    <link rel="stylesheet" href="/album.css?v=20261026-2" />
   </head>
   <body>
     <header class="album-topbar">
@@ -61,6 +61,29 @@
             <button type="button" aria-label="Mostrar foto 3" aria-pressed="false" data-hero-dot="2"></button>
           </div>
         </div>
+      </section>
+
+      <section class="challenges-section" id="desafios" aria-labelledby="challenges-title" data-challenges-section hidden>
+        <header class="challenges-intro">
+          <div>
+            <h2 id="challenges-title">Desafios</h2>
+            <p>Complete os desafios enviando a foto pelo álbum. Quem somar mais pontos ganha uma surpresa dos noivos.</p>
+          </div>
+          <div class="challenges-score" data-challenges-score aria-live="polite"></div>
+        </header>
+
+        <div class="challenges-layout">
+          <div class="challenges-list" data-challenges-list role="list"></div>
+
+          <aside class="challenges-ranking" aria-labelledby="ranking-title">
+            <h3 id="ranking-title">Ranking</h3>
+            <ol class="ranking-list" data-ranking-list></ol>
+            <p class="ranking-empty" data-ranking-empty hidden>Ninguém pontuou ainda. Seja a primeira pessoa!</p>
+            <p class="ranking-me" data-ranking-me hidden></p>
+          </aside>
+        </div>
+
+        <button class="button secondary compact challenges-new" type="button" data-new-challenge hidden>+ Novo desafio</button>
       </section>
 
       <section class="gallery-section" id="galeria" aria-labelledby="gallery-title">
@@ -121,6 +144,13 @@
             <option value="Cerimônia">Cerimônia</option>
             <option value="Jantar">Jantar</option>
             <option value="Festa">Festa</option>
+          </select>
+        </label>
+
+        <label data-upload-challenge-field hidden>
+          Desafio
+          <select name="challengeId" data-upload-challenge>
+            <option value="">Nenhum, só quero compartilhar</option>
           </select>
         </label>
 
@@ -223,6 +253,40 @@
       </form>
     </dialog>
 
+    <dialog class="upload-dialog challenge-dialog" data-challenge-dialog aria-labelledby="challenge-dialog-title">
+      <form class="upload-form" data-challenge-form>
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">Somente os noivos</span>
+            <h2 id="challenge-dialog-title" data-challenge-dialog-title>Novo desafio</h2>
+          </div>
+          <button class="dialog-close" type="button" aria-label="Fechar" data-close-challenge>×</button>
+        </div>
+
+        <label>
+          Título
+          <input type="text" name="title" minlength="3" maxlength="80" required placeholder="Tire uma foto com o noivo" />
+        </label>
+        <label>
+          Descrição (opcional)
+          <input type="text" name="description" maxlength="240" placeholder="Vale selfie!" />
+        </label>
+        <label>
+          Pontos
+          <input type="number" name="points" min="1" max="100" step="1" value="1" required />
+        </label>
+
+        <p class="form-error" data-challenge-error role="alert" hidden></p>
+
+        <div class="dialog-actions challenge-dialog-actions">
+          <button class="button danger compact" type="button" data-delete-challenge hidden>Excluir</button>
+          <button class="button ghost compact" type="button" data-toggle-challenge hidden>Encerrar</button>
+          <button class="button secondary" type="button" data-close-challenge>Cancelar</button>
+          <button class="button primary" type="submit" data-save-challenge>Salvar</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="lightbox" data-lightbox aria-label="Visualização da memória">
       <button class="dialog-close lightbox-close" type="button" aria-label="Fechar" data-close-lightbox>×</button>
       <div class="lightbox-media" data-lightbox-media></div>
@@ -231,6 +295,9 @@
         <div class="lightbox-actions">
           <button class="button primary compact lightbox-download" type="button" data-download-media hidden>
             Baixar
+          </button>
+          <button class="button ghost compact lightbox-unlink" type="button" data-unlink-challenge hidden>
+            Não vale para o desafio
           </button>
           <button class="button danger compact lightbox-delete" type="button" data-delete-media hidden>
             Excluir
@@ -277,6 +344,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 15l3-3 2 2 2-2 3 3M8 9h.01" /></svg>
         <span>Galeria</span>
       </a>
+      <a href="#desafios" data-mobile-challenges hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 20h8" /></svg>
+        <span>Desafios</span>
+      </a>
       <button type="button" data-open-upload>
         <span class="mobile-upload-icon">+</span>
         <span>Enviar</span>
@@ -288,6 +359,6 @@
     </nav>
 
     <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
-    <script src="/album.js?v=20260722-4" defer></script>
+    <script src="/album.js?v=20261026-2" defer></script>
   </body>
 </html>

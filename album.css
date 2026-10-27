@@ -2476,3 +2476,406 @@ dialog::backdrop {
 .album-login-known[hidden] {
   display: none !important;
 }
+
+/* Desafios */
+
+.button[hidden],
+.challenges-section[hidden],
+.mobile-action-bar [hidden] {
+  display: none !important;
+}
+
+.challenges-section {
+  padding: 1.4rem max(1rem, calc((100vw - 1180px) / 2)) 1.2rem;
+  background: linear-gradient(180deg, var(--mist), white);
+  scroll-margin-top: 72px;
+}
+
+.challenges-intro {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.challenges-intro h2 {
+  margin: 0;
+  color: var(--royal-dark);
+  font-family: var(--serif);
+  font-size: clamp(1.85rem, 4vw, 2.45rem);
+  line-height: 1;
+}
+
+.challenges-intro p {
+  max-width: 46ch;
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.challenges-score {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.55rem 0.85rem;
+  color: var(--royal-dark);
+  background: white;
+  font-size: 0.78rem;
+  text-align: right;
+}
+
+.challenges-score strong {
+  display: block;
+  color: var(--royal);
+  font-family: var(--serif);
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.challenges-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  gap: 1rem;
+  align-items: start;
+}
+
+.challenges-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.65rem;
+}
+
+.challenge-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 0.45rem;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem 0.9rem;
+  background: white;
+  box-shadow: 0 8px 22px rgba(0, 47, 115, 0.06);
+}
+
+.challenge-card.is-done {
+  border-color: rgba(0, 63, 152, 0.45);
+  background: linear-gradient(160deg, white 55%, var(--mist));
+}
+
+.challenge-card.is-closed {
+  opacity: 0.7;
+}
+
+.challenge-card-top {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.challenge-card h3 {
+  margin: 0;
+  color: var(--royal-dark);
+  font-size: 0.95rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.challenge-points {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  color: var(--royal);
+  background: var(--mist);
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.challenge-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.challenge-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.challenge-status {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.challenge-card.is-done .challenge-status {
+  color: var(--royal);
+}
+
+.challenge-card .button.compact {
+  min-height: 2.2rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.76rem;
+}
+
+.challenges-ranking {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  background: white;
+}
+
+.challenges-ranking h3 {
+  margin: 0 0 0.6rem;
+  color: var(--royal-dark);
+  font-family: var(--serif);
+  font-size: 1.45rem;
+}
+
+.ranking-list {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 360px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ranking-list li {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9px;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.82rem;
+}
+
+.ranking-list li.is-me {
+  background: var(--mist);
+}
+
+.ranking-position {
+  color: var(--royal);
+  font-weight: 800;
+  text-align: center;
+}
+
+.ranking-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-points {
+  color: var(--royal-dark);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ranking-empty,
+.ranking-me {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.challenges-new {
+  margin-top: 0.85rem;
+}
+
+.challenge-dialog input[type="number"] {
+  width: 100%;
+  min-height: 3.2rem;
+  border: 1px solid rgba(0, 63, 152, 0.25);
+  border-radius: 9px;
+  padding: 0.75rem 0.9rem;
+  color: var(--ink);
+  background: white;
+}
+
+.challenge-dialog-actions {
+  flex-wrap: wrap;
+}
+
+.lightbox-caption .lightbox-challenge {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--blue-light);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.lightbox-actions .button.compact.lightbox-unlink {
+  flex: 0 1 auto;
+  min-height: 2rem;
+  padding: 0.35rem 0.62rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: none;
+}
+
+@media (max-width: 900px) {
+  .challenges-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .challenges-section {
+    padding: 1.1rem 1rem 1rem;
+  }
+
+  .challenges-intro {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .challenges-score {
+    text-align: left;
+  }
+
+  .challenges-list {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-action-bar:has([data-mobile-challenges]:not([hidden])) {
+    grid-template-columns: 1fr 1fr 1.2fr 1fr;
+  }
+}
+
+/* Entrada do álbum sem senha */
+
+.album-login-step[hidden],
+.album-login-switch[hidden],
+.album-login-options[hidden] {
+  display: none !important;
+}
+
+.album-login-note {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(0, 63, 152, 0.14);
+  border-radius: 12px;
+  color: var(--royal-dark);
+  background: rgba(238, 242, 250, 0.85);
+  line-height: 1.45;
+}
+
+.album-login-people {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.album-login-person {
+  display: grid;
+  gap: 0.1rem;
+  width: 100%;
+  border: 1px solid rgba(0, 63, 152, 0.2);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  color: var(--royal-dark);
+  background: white;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.album-login-person:hover,
+.album-login-person:focus-visible {
+  border-color: var(--royal);
+  background: var(--mist);
+}
+
+.album-login-person span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.album-login-person strong {
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.album-login-person:disabled {
+  opacity: 0.6;
+}
+
+.album-login-combobox {
+  position: relative;
+}
+
+.album-login-options {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  margin: 0;
+  padding: 0.3rem;
+  overflow-y: auto;
+  border: 1px solid rgba(0, 63, 152, 0.18);
+  border-radius: 12px;
+  background: white;
+  box-shadow: var(--shadow);
+  list-style: none;
+}
+
+.album-login-options li {
+  border-radius: 8px;
+  padding: 0.7rem 0.75rem;
+  color: var(--ink);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.album-login-options li:hover,
+.album-login-options li[aria-selected="true"] {
+  color: var(--royal-dark);
+  background: var(--mist);
+}
+
+.album-login-hint {
+  margin: -0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.album-login-form .button:disabled {
+  opacity: 0.55;
+  transform: none;
+  cursor: not-allowed;
+}
+
+.album-login-error {
+  margin-top: 0.85rem;
+}
+
+.album-login-admin-link {
+  display: block;
+  margin: 1.1rem auto 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.ranking-flag {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+}

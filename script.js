@@ -351,12 +351,19 @@ function setupGiftsEngagementTracking() {
 
 const albumPublicOpenAtMs = Date.parse("2026-11-28T15:00:00-03:00");
 
+const albumEarlyAccessGuestNames = new Set(["gabriel domingues", "gabriel domingues fernandes", "halanaia vitoria"]);
+
 function normalizeAlbumGuestName(name) {
-  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+  return String(name || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
 function isAlbumEarlyAccessGuest(name) {
-  return normalizeAlbumGuestName(name) === "gabriel domingues";
+  return albumEarlyAccessGuestNames.has(normalizeAlbumGuestName(name));
 }
 
 function isAlbumPubliclyOpen(now = Date.now()) {

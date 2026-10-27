@@ -12,7 +12,7 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/png" href="/assets/favicon.png" />
-    <link rel="stylesheet" href="/album.css?v=3" />
+    <link rel="stylesheet" href="/album.css?v=20261026-2" />
   </head>
   <body class="album-login-page">
     <main class="album-login">
@@ -24,53 +24,56 @@
       <section class="album-login-card" aria-labelledby="album-login-title">
         <p class="album-login-eyebrow">Álbum coletivo</p>
         <h1 id="album-login-title"><span>Gabriel</span> <i>&amp;</i> <span>Halanaia</span></h1>
-        <p class="album-login-copy" data-album-login-copy>
-          Use o mesmo nome da confirmação de presença e a senha do álbum para ver e compartilhar as memórias.
-        </p>
+        <p class="album-login-copy" data-album-login-copy aria-live="polite">Preparando o álbum...</p>
 
-        <form class="album-login-form" data-album-login-form novalidate>
-          <div class="album-login-known" data-album-known-name hidden>
-            <p>
-              Entrando como <strong data-album-known-label></strong>
-            </p>
-            <button class="album-login-switch" type="button" data-album-use-other-name>
-              Usar outro nome
-            </button>
-          </div>
+        <div class="album-login-step" data-step="closed" hidden>
+          <p class="album-login-note">O álbum abre no dia <strong>28/11, às 15h</strong>. Volte aqui na festa!</p>
+        </div>
 
-          <label data-album-name-field>
-            Nome confirmado no convite
+        <div class="album-login-step album-login-form" data-step="remembered" hidden>
+          <div class="album-login-people" data-remembered-list role="list"></div>
+          <button class="album-login-switch" type="button" data-go-search>Não sou nenhuma dessas pessoas</button>
+        </div>
+
+        <form class="album-login-step album-login-form" data-step="search" novalidate hidden>
+          <label for="album-guest-search">Seu nome</label>
+          <div class="album-login-combobox">
             <input
-              name="guestName"
+              id="album-guest-search"
               type="text"
-              maxlength="120"
-              autocomplete="name"
-              placeholder="Ex.: Maria Silva"
-              data-album-name-input
-              required
+              maxlength="80"
+              autocomplete="off"
+              placeholder="Comece a digitar seu nome"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="album-guest-options"
+              data-guest-search
             />
+            <ul class="album-login-options" id="album-guest-options" role="listbox" data-guest-options hidden></ul>
+          </div>
+          <p class="album-login-hint" data-search-hint>Digite pelo menos 3 letras.</p>
+          <label data-password-field hidden>
+            Senha dos noivos
+            <input name="password" type="password" maxlength="64" autocomplete="current-password" data-search-password />
           </label>
-
-          <label>
-            Senha do álbum
-            <input
-              name="password"
-              type="password"
-              maxlength="64"
-              autocomplete="current-password"
-              placeholder="Senha do álbum"
-              data-album-password-input
-              required
-            />
-          </label>
-
-          <p class="album-login-error" data-album-login-error hidden></p>
-
-          <button class="button primary" type="submit" data-album-login-submit>Entrar no álbum</button>
+          <button class="button primary" type="submit" data-search-submit disabled>Entrar no álbum</button>
+          <button class="album-login-switch" type="button" data-go-new>Não achei meu nome</button>
         </form>
+
+        <form class="album-login-step album-login-form" data-step="new" novalidate hidden>
+          <label>
+            Nome e sobrenome
+            <input name="guestName" type="text" maxlength="120" autocomplete="name" placeholder="Ex.: Maria Silva" data-new-name required />
+          </label>
+          <button class="button primary" type="submit" data-new-submit>Criar meu acesso</button>
+          <button class="album-login-switch" type="button" data-go-search>Voltar para a busca</button>
+        </form>
+
+        <p class="album-login-error" data-album-login-error role="alert" hidden></p>
       </section>
     </main>
 
-    <script src="/album-login.js?v=2"></script>
+    <script src="/album-login.js?v=4"></script>
   </body>
 </html>

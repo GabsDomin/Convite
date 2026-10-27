@@ -19,10 +19,11 @@ let supportOverviewCache = { expiresAt: 0, payload: null };
 let supportOverviewBuildPromise = null;
 
 class HttpError extends Error {
-  constructor(statusCode, message, headers = {}) {
+  constructor(statusCode, message, headers = {}, { code } = {}) {
     super(message);
     this.statusCode = statusCode;
     this.headers = headers;
+    this.code = code;
   }
 }
 
@@ -72,12 +73,20 @@ const albumR2KeyPrefix = "gab-naia/album/originals/";
 const albumUploadUrlTtlSeconds = 30 * 60;
 const albumSessionCookieName = "gab_naia_album_session";
 const albumSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
-const albumMediaSelect = "id,guest_name,category,storage_provider,storage_key,public_id,resource_type,mime_type,format,version,bytes,width,height,duration,backup_status,content_hash,created_at";
-const albumAdminGuestNames = new Set(
-  (firstEnv("ALBUM_ADMIN_GUEST_NAMES") || "Gabriel Domingues Fernandes,Gabriel Domingues")
-    .split(",")
-    .map((name) => name.trim().replace(/\s+/g, " ").toLowerCase())
-    .filter(Boolean),
+const albumMediaSelect = "id,guest_name,category,storage_provider,storage_key,public_id,resource_type,mime_type,format,version,bytes,width,height,duration,backup_status,content_hash,challenge_id,created_at";
+const albumChallengeSelect = "id,title,description,points,sort_order,active,created_at";
+const albumLeaderboardPublicSize = 10;
+function parseGuestNameList(value) {
+  return new Set(String(value).split(",").map(normalizeGuestName).filter(Boolean));
+}
+
+// Os noivos: entram no álbum antes da abertura e sempre com senha.
+const albumAdminGuestNames = parseGuestNameList(
+  firstEnv("ALBUM_ADMIN_GUEST_NAMES") || "Gabriel Domingues Fernandes,Gabriel Domingues,Halanaia Vitória",
+);
+// O painel de apoio (presentes, pagamentos, confirmações) é só do Gabriel.
+const supportPanelGuestNames = parseGuestNameList(
+  firstEnv("SUPPORT_PANEL_GUEST_NAMES") || "Gabriel Domingues Fernandes,Gabriel Domingues",
 );
 const albumPublicOpenAtRaw = firstEnv("ALBUM_PUBLIC_OPEN_AT") || "2026-11-28T15:00:00-03:00";
 const albumPublicOpenAtMs = Date.parse(albumPublicOpenAtRaw);
@@ -576,16 +585,12 @@ function requireAlbumSession(request) {
   return session;
 }
 
-function normalizeAlbumGuestName(name) {
-  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
 function isAlbumAdmin(guestName) {
-  return albumAdminGuestNames.has(normalizeAlbumGuestName(guestName));
+  return albumAdminGuestNames.has(normalizeGuestName(guestName));
 }
 
 function canAccessSupportPanel(guestName) {
-  return isAlbumAdmin(guestName);
+  return supportPanelGuestNames.has(normalizeGuestName(guestName));
 }
 
 function isAlbumPubliclyOpen(now = Date.now()) {
@@ -604,7 +609,7 @@ function requireAlbumAccess(session) {
 
 function requireAlbumAdmin(session) {
   if (!isAlbumAdmin(session.guestName)) {
-    throw new HttpError(403, "Somente o administrador do álbum pode excluir memórias.");
+    throw new HttpError(403, "Somente o administrador do álbum pode fazer isso.");
   }
 }
 
@@ -674,6 +679,44 @@ function requireAlbumMediaId(value) {
     throw new HttpError(400, "Identificador de mídia inválido.");
   }
   return id;
+}
+
+function requireAlbumChallengeId(value) {
+  const id = String(value || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw new HttpError(400, "Desafio inválido.");
+  }
+  return id.toLowerCase();
+}
+
+function optionalAlbumChallengeId(value) {
+  if (value == null || value === "") return null;
+  return requireAlbumChallengeId(value);
+}
+
+function requireAlbumChallengeInput(body, { partial = false } = {}) {
+  const input = {};
+  if (!partial || body.title !== undefined) {
+    input.title = requireText(body.title, "Título do desafio", { min: 3, max: 80 });
+  }
+  if (!partial || body.description !== undefined) {
+    input.description = optionalText(body.description, "Descrição do desafio", 240) || null;
+  }
+  if (!partial || body.points !== undefined) {
+    const points = body.points == null || body.points === "" ? 1 : Number(body.points);
+    if (!Number.isSafeInteger(points) || points < 1 || points > 100) {
+      throw new HttpError(400, "Os pontos do desafio devem ficar entre 1 e 100.");
+    }
+    input.points = points;
+  }
+  if (body.active !== undefined) {
+    if (typeof body.active !== "boolean") throw new HttpError(400, "Situação do desafio inválida.");
+    input.active = body.active;
+  }
+  if (partial && !Object.keys(input).length) {
+    throw new HttpError(400, "Nada para atualizar no desafio.");
+  }
+  return input;
 }
 
 function albumSessionCookieHeader(token, { clear = false } = {}) {
@@ -888,6 +931,7 @@ function requireAlbumUploadToken(value) {
     category: requireAlbumCategory(payload.category),
     storageKey: String(payload.storageKey),
     contentHash: requireContentHash(payload.contentHash),
+    challengeId: optionalAlbumChallengeId(payload.challengeId),
   };
 }
 
@@ -985,6 +1029,7 @@ function normalizeAlbumMedia(media) {
         : buildR2ImageUrl(originalUrl, "width=900,height=1200,fit=cover,quality=82,format=auto"),
       backupStatus: media.backup_status || "pending",
       contentHash: media.content_hash || null,
+      challengeId: media.challenge_id || null,
       createdAt: media.created_at,
     };
   }
@@ -1013,6 +1058,7 @@ function normalizeAlbumMedia(media) {
     ),
     createdAt: media.created_at,
     contentHash: media.content_hash || null,
+    challengeId: media.challenge_id || null,
   };
 }
 
@@ -1852,6 +1898,206 @@ async function deleteSupabaseTable(path) {
   return data;
 }
 
+async function patchSupabaseTable(path, payload) {
+  const endpoint = new URL(`/rest/v1/${path}`, supabaseUrl);
+  const supabaseResponse = await fetch(endpoint, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "Prefer": "return=representation",
+      ...getSupabaseHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const responseText = await supabaseResponse.text();
+  const data = responseText ? JSON.parse(responseText) : null;
+
+  if (!supabaseResponse.ok) {
+    const message = data?.message || data?.error_description || data?.hint || "Erro ao atualizar no Supabase.";
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+function normalizeAlbumChallenge(challenge) {
+  return {
+    id: challenge.id,
+    title: challenge.title,
+    description: challenge.description || "",
+    points: Number(challenge.points || 1),
+    active: Boolean(challenge.active),
+  };
+}
+
+async function readAlbumChallenges() {
+  const rows = await readSupabaseTable(
+    `album_challenges?select=${albumChallengeSelect}&order=sort_order.asc,created_at.asc&limit=200`,
+  );
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function requireOpenAlbumChallenge(challengeId) {
+  const rows = await readSupabaseTable(
+    `album_challenges?select=id,active&id=eq.${encodeURIComponent(challengeId)}&limit=1`,
+  );
+  const challenge = Array.isArray(rows) ? rows[0] : rows;
+  if (!challenge?.id) throw new HttpError(404, "Desafio não encontrado.");
+  if (!challenge.active) throw new HttpError(409, "Este desafio já foi encerrado.");
+  return challenge.id;
+}
+
+// Cada desafio conta uma vez por convidado, com a data da primeira prova enviada.
+// Empate em pontos vai para quem chegou primeiro à pontuação.
+function buildAlbumChallengeBoard(challengeRows, proofRows, viewerGuestName) {
+  const challenges = challengeRows.map(normalizeAlbumChallenge);
+  const challengeById = new Map(challenges.map((challenge) => [challenge.id, challenge]));
+  const completionCount = new Map();
+  const people = new Map();
+
+  for (const row of proofRows) {
+    const challenge = challengeById.get(row.challenge_id);
+    const key = normalizeGuestName(row.guest_name);
+    if (!challenge || !key) continue;
+    const person = people.get(key) || { guestName: row.guest_name, completedAt: new Map() };
+    const previous = person.completedAt.get(challenge.id);
+    if (!previous || row.created_at < previous) person.completedAt.set(challenge.id, row.created_at);
+    people.set(key, person);
+  }
+
+  const leaderboard = Array.from(people.values()).map((person) => {
+    let points = 0;
+    let reachedAt = "";
+    person.completedAt.forEach((completedAt, challengeId) => {
+      points += challengeById.get(challengeId).points;
+      completionCount.set(challengeId, (completionCount.get(challengeId) || 0) + 1);
+      if (completedAt > reachedAt) reachedAt = completedAt;
+    });
+    return {
+      guestName: person.guestName,
+      points,
+      completed: person.completedAt.size,
+      completedIds: Array.from(person.completedAt.keys()),
+      reachedAt,
+    };
+  });
+
+  leaderboard.sort((a, b) => b.points - a.points || b.completed - a.completed || a.reachedAt.localeCompare(b.reachedAt));
+  leaderboard.forEach((entry, index) => {
+    entry.rank = index + 1;
+  });
+
+  const viewerKey = normalizeGuestName(viewerGuestName);
+  const viewer = leaderboard.find((entry) => normalizeGuestName(entry.guestName) === viewerKey);
+  const viewerCompleted = new Set(viewer?.completedIds || []);
+
+  return {
+    challenges: challenges.map((challenge) => ({
+      ...challenge,
+      completedByMe: viewerCompleted.has(challenge.id),
+      completedCount: completionCount.get(challenge.id) || 0,
+    })),
+    leaderboard: leaderboard.map(({ completedIds, ...entry }) => entry),
+    me: {
+      points: viewer?.points || 0,
+      completed: viewer?.completed || 0,
+      rank: viewer?.rank || null,
+    },
+    totalPoints: challenges.reduce((sum, challenge) => sum + challenge.points, 0),
+  };
+}
+
+async function loadAlbumChallengeBoard(viewerGuestName) {
+  const [challengeRows, proofRows] = await Promise.all([
+    readAlbumChallenges(),
+    readSupabaseTable("album_media?select=guest_name,challenge_id,created_at&challenge_id=not.is.null&limit=5000"),
+  ]);
+  return buildAlbumChallengeBoard(challengeRows, Array.isArray(proofRows) ? proofRows : [], viewerGuestName);
+}
+
+let albumGuestDirectoryCache = { entries: null, expiresAt: 0 };
+
+function invalidateAlbumGuestDirectory() {
+  albumGuestDirectoryCache = { entries: null, expiresAt: 0 };
+}
+
+// Nomes que podem entrar no álbum: confirmações de presença + acessos criados no próprio álbum.
+async function loadAlbumGuestDirectory() {
+  if (albumGuestDirectoryCache.entries && albumGuestDirectoryCache.expiresAt > Date.now()) {
+    return albumGuestDirectoryCache.entries;
+  }
+  const [rsvpRows, albumGuestRows] = await Promise.all([
+    readSupabaseTable("rsvps?select=guest_name&limit=5000"),
+    readSupabaseTable("album_guests?select=guest_name&limit=5000").catch(() => []),
+  ]);
+  const entries = new Map();
+  const addRows = (rows, source) => {
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const key = normalizeGuestName(row.guest_name);
+      if (key && !entries.has(key)) entries.set(key, { guestName: row.guest_name, key, source });
+    }
+  };
+  addRows(rsvpRows, "rsvp");
+  addRows(albumGuestRows, "album");
+  albumGuestDirectoryCache = { entries, expiresAt: Date.now() + 60_000 };
+  return entries;
+}
+
+function searchAlbumGuestDirectory(entries, query, limit = 8) {
+  const terms = normalizeGuestName(query).split(" ").filter(Boolean);
+  if (!terms.length) return [];
+  const matches = [];
+  for (const entry of entries.values()) {
+    const words = entry.key.split(" ");
+    if (!terms.every((term) => words.some((word) => word.startsWith(term)))) continue;
+    matches.push(entry);
+  }
+  matches.sort((a, b) => Number(!a.key.startsWith(terms[0])) - Number(!b.key.startsWith(terms[0]))
+    || a.key.localeCompare(b.key, "pt-BR"));
+  return matches.slice(0, limit).map((entry) => entry.guestName);
+}
+
+async function assertGuestNotRestricted(guestName) {
+  let rows;
+  try {
+    rows = await readSupabaseTable("restricted_guests?select=guest_name&active=eq.true&limit=1000");
+  } catch {
+    return;
+  }
+  const key = normalizeGuestName(guestName);
+  if ((Array.isArray(rows) ? rows : []).some((row) => normalizeGuestName(row.guest_name) === key)) {
+    throw new HttpError(403, "Não foi possível liberar o álbum para este nome.");
+  }
+}
+
+// Busca a família pelo id da confirmação (e não pelo nome), para funcionar com nomes acentuados.
+async function readRememberedAlbumGuests(request) {
+  const primaryId = await readRememberedPrimaryRsvpId(request);
+  if (!primaryId) return [];
+  try {
+    const encodedId = encodeURIComponent(primaryId);
+    const [primaryRows, companionRows] = await Promise.all([
+      readSupabaseTable(`rsvps?select=guest_name&id=eq.${encodedId}&limit=1`),
+      readSupabaseTable(`rsvps?select=guest_name&primary_rsvp_id=eq.${encodedId}&order=created_at.asc,guest_name.asc`),
+    ]);
+    const primaryName = (Array.isArray(primaryRows) ? primaryRows[0] : primaryRows)?.guest_name;
+    if (!primaryName) return [];
+    return [primaryName, ...(Array.isArray(companionRows) ? companionRows : []).map((row) => row.guest_name)]
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function requireAlbumPublicEntry(guestName) {
+  if (isAlbumAdmin(guestName)) {
+    throw new HttpError(403, "Os noivos entram com senha.", {}, { code: "admin_password" });
+  }
+  if (!isAlbumPubliclyOpen()) {
+    throw new HttpError(403, "O álbum coletivo abre no dia 28/11, às 15h.");
+  }
+}
+
 async function deleteAlbumMediaRecord(mediaId) {
   const rows = await deleteSupabaseTable(`album_media?id=eq.${encodeURIComponent(mediaId)}`);
   const deleted = Array.isArray(rows) ? rows[0] : rows;
@@ -2145,6 +2391,8 @@ async function handleApi(request, response, pathname) {
       const guestName = requireText(body.guestName, "Nome", { min: 2, max: 120 });
       const password = String(body.password ?? "");
       if (!password) throw new HttpError(400, "Senha obrigatória.");
+      // Senha é só para os noivos; convidados entram por /api/album/enter.
+      if (!isAlbumAdmin(guestName)) throw new HttpError(403, "Convidados entram no álbum sem senha.");
 
       let rows;
       try {
@@ -2178,6 +2426,78 @@ async function handleApi(request, response, pathname) {
         isAlbumAdmin: isAlbumAdmin(row.guest_name),
       }, {
         "Set-Cookie": albumSessionCookieHeader(createAlbumSessionToken(row.guest_name)),
+      });
+      return true;
+    }
+
+    if (request.method === "GET" && pathname === "/api/album/entry") {
+      enforceRateLimit(request, "album-entry", 60, 60_000);
+      const remembered = hasSupabaseConfig && isAlbumPubliclyOpen()
+        ? await readRememberedAlbumGuests(request)
+        : [];
+      sendJson(response, 200, {
+        publicOpen: isAlbumPubliclyOpen(),
+        publicOpenAt: albumPublicOpenAtRaw,
+        remembered,
+      });
+      return true;
+    }
+
+    if (request.method === "GET" && pathname === "/api/album/guests") {
+      enforceRateLimit(request, "album-guest-search", 90, 60_000);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Confirmações ainda não estão disponíveis.");
+      const query = String(new URL(request.url, "http://127.0.0.1").searchParams.get("q") || "").slice(0, 80);
+      // Busca só a partir de 3 letras e devolve poucos nomes, para não expor a lista inteira.
+      if (normalizeGuestName(query).replace(/ /g, "").length < 3) {
+        sendJson(response, 200, { guests: [] });
+        return true;
+      }
+      // Antes da abertura só os noivos aparecem; escolher um deles pede a senha.
+      const guests = searchAlbumGuestDirectory(await loadAlbumGuestDirectory(), query)
+        .filter((name) => isAlbumPubliclyOpen() || isAlbumAdmin(name));
+      sendJson(response, 200, { guests });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/album/enter") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-enter", 30, 10 * 60_000);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Confirmações ainda não estão disponíveis.");
+      if (albumUploadSigningSecret.length < 32) throw new HttpError(503, "Sessão do álbum indisponível.");
+      const body = await readJsonBody(request);
+      const source = String(body.source || "");
+      const requestedName = requireText(body.guestName, "Nome", { min: 2, max: 120 });
+      requireAlbumPublicEntry(requestedName);
+
+      let guestName;
+      if (source === "remembered") {
+        const remembered = await readRememberedAlbumGuests(request);
+        guestName = remembered.find((name) => normalizeGuestName(name) === normalizeGuestName(requestedName));
+        if (!guestName) throw new HttpError(403, "Este aparelho não confirmou presença com esse nome.");
+      } else if (source === "list") {
+        guestName = (await loadAlbumGuestDirectory()).get(normalizeGuestName(requestedName))?.guestName;
+        if (!guestName) throw new HttpError(404, "Nome não encontrado. Toque em \"Não achei meu nome\".");
+      } else if (source === "new") {
+        const typedName = requireFullGuestName(requestedName, "Nome");
+        const key = normalizeGuestName(typedName);
+        guestName = (await loadAlbumGuestDirectory()).get(key)?.guestName;
+        if (!guestName) {
+          await assertGuestNotRestricted(typedName);
+          try {
+            await insertSupabaseTable("album_guests", { guest_name: typedName, normalized_guest_name: key });
+          } catch (error) {
+            if (!/duplicate|unique/i.test(String(error.message || ""))) throw error;
+          }
+          invalidateAlbumGuestDirectory();
+          guestName = typedName;
+        }
+      } else {
+        throw new HttpError(400, "Forma de entrada inválida.");
+      }
+      requireAlbumPublicEntry(guestName);
+
+      sendJson(response, 200, { ok: true, guestName, isAlbumAdmin: false }, {
+        "Set-Cookie": albumSessionCookieHeader(createAlbumSessionToken(guestName)),
       });
       return true;
     }
@@ -2334,6 +2654,8 @@ async function handleApi(request, response, pathname) {
       const category = requireAlbumCategory(body.category);
       const file = requireAlbumFile(body);
       const contentHash = requireContentHash(body.contentHash);
+      const requestedChallengeId = optionalAlbumChallengeId(body.challengeId);
+      const challengeId = requestedChallengeId ? await requireOpenAlbumChallenge(requestedChallengeId) : null;
       const storageKey = `${albumR2KeyPrefix}${randomUUID()}.${albumFileExtensions.get(file.fileType)}`;
       const expiresAt = Date.now() + albumUploadUrlTtlSeconds * 1000;
       const uploadToken = createAlbumUploadToken({
@@ -2341,6 +2663,7 @@ async function handleApi(request, response, pathname) {
         guestName,
         category,
         contentHash,
+        challengeId,
         storageKey,
         expiresAt,
       });
@@ -2402,10 +2725,101 @@ async function handleApi(request, response, pathname) {
         duration: upload.duration,
         etag: upload.etag,
         content_hash: upload.contentHash,
+        ...(upload.challengeId ? { challenge_id: upload.challengeId } : {}),
         backup_status: "pending",
       });
       if (!inserted?.[0]) throw new Error("O Supabase não retornou a memória salva.");
       sendJson(response, 201, { media: normalizeAlbumMedia(inserted[0]) });
+      return true;
+    }
+
+    if (request.method === "GET" && pathname === "/api/album/challenges") {
+      enforceRateLimit(request, "album-challenges", 120, 60_000);
+      const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
+      if (!hasSupabaseConfig) {
+        sendJson(response, 200, { challenges: [], leaderboard: [], me: { points: 0, completed: 0, rank: null }, totalPoints: 0 });
+        return true;
+      }
+      const board = await loadAlbumChallengeBoard(session.guestName);
+      // O ranking completo fica com os noivos; convidados veem o pódio e a própria posição.
+      if (!isAlbumAdmin(session.guestName)) {
+        board.leaderboard = board.leaderboard.slice(0, albumLeaderboardPublicSize);
+      } else {
+        const directory = await loadAlbumGuestDirectory().catch(() => new Map());
+        board.leaderboard.forEach((entry) => {
+          entry.withoutRsvp = directory.get(normalizeGuestName(entry.guestName))?.source !== "rsvp";
+        });
+      }
+      sendJson(response, 200, board);
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/album/challenges") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-challenge-write", 60, 10 * 60_000);
+      const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
+      requireAlbumAdmin(session);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Supabase não está configurado no servidor.");
+      const input = requireAlbumChallengeInput(await readJsonBody(request));
+      const existing = await readAlbumChallenges();
+      const nextSortOrder = existing.reduce((max, row) => Math.max(max, Number(row.sort_order) || 0), 0) + 10;
+      const inserted = await insertSupabaseTable("album_challenges", { ...input, sort_order: nextSortOrder });
+      if (!inserted?.[0]) throw new Error("O Supabase não retornou o desafio salvo.");
+      sendJson(response, 201, { challenge: normalizeAlbumChallenge(inserted[0]) });
+      return true;
+    }
+
+    const albumChallengeMatch = pathname.match(/^\/api\/album\/challenges\/([0-9a-f-]{36})$/i);
+    if ((request.method === "PATCH" || request.method === "DELETE") && albumChallengeMatch) {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-challenge-write", 60, 10 * 60_000);
+      const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
+      requireAlbumAdmin(session);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Supabase não está configurado no servidor.");
+      const challengeId = requireAlbumChallengeId(albumChallengeMatch[1]);
+      const filter = `album_challenges?id=eq.${encodeURIComponent(challengeId)}`;
+
+      if (request.method === "DELETE") {
+        // As memórias continuam no álbum; só deixam de contar para o desafio (on delete set null).
+        const deleted = await deleteSupabaseTable(filter);
+        if (!deleted?.[0]) throw new HttpError(404, "Desafio não encontrado.");
+        sendJson(response, 200, { ok: true, id: challengeId });
+        return true;
+      }
+
+      const input = requireAlbumChallengeInput(await readJsonBody(request), { partial: true });
+      const updated = await patchSupabaseTable(filter, input);
+      if (!updated?.[0]) throw new HttpError(404, "Desafio não encontrado.");
+      sendJson(response, 200, { challenge: normalizeAlbumChallenge(updated[0]) });
+      return true;
+    }
+
+    const albumMediaChallengeMatch = pathname.match(/^\/api\/album\/media\/([0-9a-f-]{36})\/challenge$/i);
+    if (request.method === "PATCH" && albumMediaChallengeMatch) {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-challenge-write", 60, 10 * 60_000);
+      const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
+      requireAlbumAdmin(session);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Supabase não está configurado no servidor.");
+      const mediaId = requireAlbumMediaId(albumMediaChallengeMatch[1]);
+      const body = await readJsonBody(request);
+      const challengeId = optionalAlbumChallengeId(body.challengeId);
+      if (challengeId) {
+        const rows = await readSupabaseTable(
+          `album_challenges?select=id&id=eq.${encodeURIComponent(challengeId)}&limit=1`,
+        );
+        if (!rows?.[0]?.id) throw new HttpError(404, "Desafio não encontrado.");
+      }
+      const updated = await patchSupabaseTable(
+        `album_media?id=eq.${encodeURIComponent(mediaId)}&select=${albumMediaSelect}`,
+        { challenge_id: challengeId },
+      );
+      if (!updated?.[0]) throw new HttpError(404, "Memória não encontrada.");
+      sendJson(response, 200, { media: normalizeAlbumMedia(updated[0]) });
       return true;
     }
 
@@ -2580,6 +2994,7 @@ async function handleApi(request, response, pathname) {
     sendJson(response, statusCode, {
       error: error.message || "Erro ao processar solicitação.",
       ...(guestNotInvited ? { code: "guest_not_invited" } : {}),
+      ...(error instanceof HttpError && error.code ? { code: error.code } : {}),
     }, headers);
     return true;
   }

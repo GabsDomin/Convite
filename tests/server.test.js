@@ -214,6 +214,103 @@ test("exclusão de mídia exige administrador do álbum", async () => {
   assert.match(notAdminPayload.error, /administrador do álbum/i);
 });
 
+test("desafios exigem sessão e somente o administrador cria, edita ou invalida", async () => {
+  const challengeId = "00000000-0000-4000-8000-000000000002";
+  const mediaId = "00000000-0000-4000-8000-000000000001";
+
+  const noSession = await fetch(`${baseUrl}/api/album/challenges`);
+  assert.equal(noSession.status, 401);
+
+  const attempts = [
+    ["POST", "/api/album/challenges", { title: "Foto com o noivo", points: 1 }],
+    ["PATCH", `/api/album/challenges/${challengeId}`, { active: false }],
+    ["DELETE", `/api/album/challenges/${challengeId}`, undefined],
+    ["PATCH", `/api/album/media/${mediaId}/challenge`, { challengeId: null }],
+  ];
+  for (const [method, pathname, body] of attempts) {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      method,
+      headers: { "Content-Type": "application/json", Cookie: albumSessionCookie("Pessoa Teste") },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    assert.equal(response.status, 403, `${method} ${pathname}`);
+    assert.match((await response.json()).error, /administrador do álbum/i);
+  }
+});
+
+test("upload para desafio rejeita identificador de desafio inválido", async () => {
+  const response = await fetch(`${baseUrl}/api/album/upload-signature`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: albumSessionCookie() },
+    body: JSON.stringify({
+      category: "Festa",
+      challengeId: "nao-e-um-uuid",
+      contentHash: sampleContentHash,
+      fileName: "foto.jpg",
+      fileType: "image/jpeg",
+      fileSize: 8_000_000,
+      accessCode: "2811",
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /desafio inválido/i);
+});
+
+test("entrada sem senha nunca libera os noivos e valida a forma de entrada", async () => {
+  const entry = await fetch(`${baseUrl}/api/album/entry`);
+  assert.equal(entry.status, 200);
+  assert.deepEqual((await entry.json()).remembered, []);
+
+  const shortSearch = await fetch(`${baseUrl}/api/album/guests?q=ab`);
+  assert.equal(shortSearch.status, 200);
+  assert.deepEqual((await shortSearch.json()).guests, []);
+
+  for (const source of ["list", "new", "remembered"]) {
+    const admin = await fetch(`${baseUrl}/api/album/enter`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestName: "Gabriel Domingues", source }),
+    });
+    const payload = await admin.json();
+    assert.equal(admin.status, 403, source);
+    assert.equal(payload.code, "admin_password", source);
+    assert.equal(admin.headers.get("set-cookie"), null, source);
+  }
+
+  for (const guestName of ["Halanaia Vitória", "halanaia vitoria"]) {
+    const bride = await fetch(`${baseUrl}/api/album/enter`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestName, source: "new" }),
+    });
+    assert.equal(bride.status, 403, guestName);
+    assert.equal((await bride.json()).code, "admin_password", guestName);
+  }
+
+  const guestPassword = await fetch(`${baseUrl}/api/album/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guestName: "Pessoa Teste", password: "qualquer" }),
+  });
+  assert.equal(guestPassword.status, 403);
+  assert.match((await guestPassword.json()).error, /sem senha/i);
+
+  const invalidSource = await fetch(`${baseUrl}/api/album/enter`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guestName: "Pessoa Teste", source: "qualquer" }),
+  });
+  assert.equal(invalidSource.status, 400);
+
+  const singleName = await fetch(`${baseUrl}/api/album/enter`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guestName: "Pessoa", source: "new" }),
+  });
+  assert.equal(singleName.status, 400);
+  assert.match((await singleName.json()).error, /nome e sobrenome/i);
+});
+
 test("APIs do álbum exigem sessão autenticada", async () => {
   const response = await fetch(`${baseUrl}/api/album/media`);
   const payload = await response.json();
@@ -412,10 +509,13 @@ test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa 
   assert.match(album, /data-upload-user/);
   assert.doesNotMatch(album, /name="guestName"/);
   assert.match(album, /data-album-logout/);
-  assert.match(albumLogin, /data-album-login-form/);
-  assert.match(albumLogin, /data-album-known-name/);
+  assert.match(albumLogin, /data-step="remembered"/);
+  assert.match(albumLogin, /data-guest-search/);
+  assert.match(albumLogin, /Não achei meu nome/);
+  assert.match(albumLogin, /data-password-field/);
+  assert.doesNotMatch(albumLogin, /Sou um dos noivos/);
   assert.match(albumLoginScript, /gabriel-halanaia-rsvp/);
-  assert.match(albumLoginScript, /applyKnownNameMode/);
+  assert.match(albumLoginScript, /\/api\/album\/enter/);
   assert.match(albumAuthSchema, /123456/);
   assert.match(album, /data-download-media/);
   assert.match(album, /data-delete-media/);
