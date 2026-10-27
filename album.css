@@ -3267,3 +3267,18 @@ li[data-podium="3"] .ranking-position {
   margin-top: auto;
   padding-top: 0.2rem;
 }
+
+/* Ambiente de teste */
+
+.album-test-banner {
+  position: relative;
+  z-index: 40;
+  margin: 0;
+  padding: 0.55rem 1rem;
+  color: #5c3d00;
+  background: #ffe9a8;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+}

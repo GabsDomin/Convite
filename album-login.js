@@ -353,6 +353,13 @@ async function prepareEntry() {
     entryState = { publicOpen: true, remembered: [] };
   }
 
+  if (entryState.albumTestMode) {
+    const banner = document.createElement("p");
+    banner.className = "album-test-banner";
+    banner.textContent = "Ambiente de teste: o álbum está liberado aqui antes do casamento.";
+    document.body.prepend(banner);
+  }
+
   if (!entryState.publicOpen) {
     showStep("closed");
     return;

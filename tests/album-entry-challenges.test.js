@@ -82,12 +82,13 @@ async function startApp({ supabaseUrl, openAt }) {
   });
   const baseUrl = `http://127.0.0.1:${port}`;
 
-  async function call(pathname, { method = "GET", body, cookie } = {}) {
+  async function call(pathname, { method = "GET", body, cookie, host } = {}) {
     const response = await fetch(`${baseUrl}${pathname}`, {
       method,
       headers: {
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         ...(cookie ? { Cookie: cookie } : {}),
+        ...(host ? { "X-Forwarded-Host": host } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -152,6 +153,28 @@ describe("álbum antes da abertura (28/11 às 15h)", () => {
     const created = await enter(app, "Pessoa Nova Teste", "new");
     assert.equal(created.status, 403);
     assert.equal(supabase.state.album_guests.length, 0);
+  });
+
+  test("ambiente de teste: pelo endereço de teste o álbum já está liberado; pelo normal, não", async () => {
+    const testHost = "gab-naia-teste.vercel.app";
+    const config = (await app.call("/api/config", { host: testHost })).body;
+    assert.equal(config.albumPublicOpen, true);
+    assert.equal(config.albumTestMode, true);
+    assert.equal("albumTestMode" in (await app.call("/api/config")).body, false);
+
+    assert.equal((await app.call("/api/album/entry", { host: testHost })).body.publicOpen, true);
+    assert.deepEqual((await app.call("/api/album/guests?q=livia", { host: testHost })).body.guests, ["Livia de Paula", "Livia Fernandes"]);
+
+    const guest = await app.call("/api/album/enter", { method: "POST", body: { guestName: "Livia Fernandes", source: "list" }, host: testHost });
+    assert.equal(guest.status, 200);
+    const session = (await app.call("/api/album/session", { cookie: guest.sessionCookie, host: testHost })).body;
+    assert.equal(session.albumAvailable, true);
+    assert.equal(session.albumTestMode, true);
+    assert.equal((await app.call("/api/album/media", { cookie: guest.sessionCookie, host: testHost })).status, 200);
+
+    // A mesma sessão, pelo endereço normal, continua barrada até a data.
+    assert.equal((await app.call("/api/album/media", { cookie: guest.sessionCookie })).status, 403);
+    assert.equal((await app.call("/api/album/entry")).body.publicOpen, false);
   });
 
   test("os noivos recebem o pedido de senha e entram antes da abertura", async () => {

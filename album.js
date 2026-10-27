@@ -2585,6 +2585,15 @@ lightboxUnlinkButton?.addEventListener("click", async () => {
   }
 });
 
+function showAlbumTestBanner() {
+  if (document.querySelector("[data-album-test-banner]")) return;
+  const banner = document.createElement("p");
+  banner.className = "album-test-banner";
+  banner.dataset.albumTestBanner = "";
+  banner.textContent = "Ambiente de teste: o álbum está liberado aqui antes do casamento. Fotos e desafios ficam no álbum de verdade.";
+  document.body.prepend(banner);
+}
+
 async function ensureAlbumSession() {
   const logoutButton = document.querySelector("[data-album-logout]");
   try {
@@ -2596,6 +2605,7 @@ async function ensureAlbumSession() {
     }
     albumIsAdmin = Boolean(payload.isAlbumAdmin);
     albumSessionGuestName = String(payload.guestName || "").trim();
+    if (payload.albumTestMode) showAlbumTestBanner();
     updateUploadUserLabel();
     if (logoutButton) {
       logoutButton.hidden = false;

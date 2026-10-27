@@ -1,5 +1,6 @@
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,6 +101,12 @@ const supportPanelGuestNames = parseGuestNameList(
 );
 const albumPublicOpenAtRaw = firstEnv("ALBUM_PUBLIC_OPEN_AT") || "2026-11-28T15:00:00-03:00";
 const albumPublicOpenAtMs = Date.parse(albumPublicOpenAtRaw);
+const albumTestHosts = new Set(
+  (firstEnv("ALBUM_TEST_HOSTS") || "gab-naia-teste.vercel.app")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean),
+);
 const hasSupportPanelConfig = hasSupabaseConfig && albumUploadSigningSecret.length >= 32;
 const supportSessionCookieName = "gab_naia_support_session";
 const supportSessionTtlMs = 12 * 60 * 60 * 1000;
@@ -603,7 +610,25 @@ function canAccessSupportPanel(guestName) {
   return supportPanelGuestNames.has(normalizeGuestName(guestName));
 }
 
+// Ambiente de teste: pelo endereço de teste o álbum fica liberado antes da data,
+// usando o mesmo servidor e o mesmo banco de produção.
+const requestContext = new AsyncLocalStorage();
+
+function isAlbumTestHost(request) {
+  const host = String(request.headers["x-forwarded-host"] || request.headers.host || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, "");
+  return albumTestHosts.has(host);
+}
+
+function isAlbumTestRequest() {
+  return Boolean(requestContext.getStore()?.albumTest);
+}
+
 function isAlbumPubliclyOpen(now = Date.now()) {
+  if (isAlbumTestRequest()) return true;
   return Number.isFinite(albumPublicOpenAtMs) && now >= albumPublicOpenAtMs;
 }
 
@@ -2456,6 +2481,7 @@ async function handleApi(request, response, pathname) {
       albumConfigured: hasAlbumConfig,
       albumPublicOpenAt: albumPublicOpenAtRaw,
       albumPublicOpen: isAlbumPubliclyOpen(),
+      ...(isAlbumTestRequest() ? { albumTestMode: true } : {}),
     });
     return true;
   }
@@ -2504,6 +2530,7 @@ async function handleApi(request, response, pathname) {
         albumAvailable: Boolean(session && canAccessAlbum(session.guestName)),
         albumPublicOpenAt: albumPublicOpenAtRaw,
         albumPublicOpen: isAlbumPubliclyOpen(),
+        albumTestMode: isAlbumTestRequest(),
       });
       return true;
     }
@@ -2565,6 +2592,7 @@ async function handleApi(request, response, pathname) {
         publicOpen: isAlbumPubliclyOpen(),
         publicOpenAt: albumPublicOpenAtRaw,
         remembered,
+        albumTestMode: isAlbumTestRequest(),
       });
       return true;
     }
@@ -3162,7 +3190,7 @@ async function handleApi(request, response, pathname) {
   }
 }
 
-const server = createServer(async (request, response) => {
+async function handleRequest(request, response) {
   let pathname;
   try {
     pathname = new URL(request.url || "/", `http://localhost:${port}`).pathname;
@@ -3298,7 +3326,11 @@ const server = createServer(async (request, response) => {
   }));
   if (request.method === "HEAD") response.end();
   else createReadStream(filePath).pipe(response);
-});
+}
+
+const server = createServer((request, response) => (
+  requestContext.run({ albumTest: isAlbumTestHost(request) }, () => handleRequest(request, response))
+));
 
 server.listen(port, () => {
   console.log(`Convite rodando na porta ${port}`);
