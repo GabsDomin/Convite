@@ -69,6 +69,22 @@ const challengeDeleteButton = document.querySelector("[data-delete-challenge]");
 const challengeToggleButton = document.querySelector("[data-toggle-challenge]");
 const challengeSaveButton = document.querySelector("[data-save-challenge]");
 const lightboxUnlinkButton = document.querySelector("[data-unlink-challenge]");
+const challengesCarousel = document.querySelector("[data-challenges-carousel]");
+const challengesControls = document.querySelector("[data-challenges-controls]");
+const challengesDots = document.querySelector("[data-challenges-dots]");
+const challengesPreviousButton = document.querySelector("[data-challenges-previous]");
+const challengesNextButton = document.querySelector("[data-challenges-next]");
+const rankingOpenButton = document.querySelector("[data-open-ranking]");
+const rankingRulesButton = document.querySelector("[data-open-rules]");
+const rankingDialog = document.querySelector("[data-ranking-dialog]");
+const rankingDialogTitle = document.querySelector("[data-ranking-dialog-title]");
+const rankingRules = document.querySelector("[data-ranking-rules]");
+const rankingFull = document.querySelector("[data-ranking-full]");
+const rankingFilter = document.querySelector("[data-ranking-filter]");
+const rankingFullList = document.querySelector("[data-ranking-full-list]");
+const rankingFullEmpty = document.querySelector("[data-ranking-full-empty]");
+const challengesFilters = document.querySelector("[data-challenges-filters]");
+const challengesCopy = document.querySelector("[data-challenges-copy]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
@@ -2075,13 +2091,48 @@ function formatChallengePoints(points) {
   return `${points} ${points === 1 ? "ponto" : "pontos"}`;
 }
 
+const challengeDifficultyLabels = { easy: "Fácil", medium: "Médio", hard: "Difícil" };
+const challengeDifficultyOrder = { easy: 0, medium: 1, hard: 2 };
+let activeChallengeFilter = "all";
+
+function challengeScoreValue(challenge) {
+  return challenge.points * (latestChallengeBoard?.rules?.pointsPerChallengePoint || 10);
+}
+
+function sortChallengesForViewer(challenges) {
+  return [...challenges].sort((a, b) => (a.scope === "all") - (b.scope === "all")
+    || challengeDifficultyOrder[a.difficulty] - challengeDifficultyOrder[b.difficulty]);
+}
+
+function filterChallengesForAdmin(challenges) {
+  if (activeChallengeFilter === "couple") return challenges.filter((challenge) => challenge.couple);
+  if (activeChallengeFilter === "wedding") return challenges.filter((challenge) => challenge.wedding);
+  if (activeChallengeFilter === "everyone") return challenges.filter((challenge) => challenge.scope === "all");
+  if (activeChallengeFilter !== "all") return challenges.filter((challenge) => challenge.difficulty === activeChallengeFilter);
+  return challenges;
+}
+
+async function swapChallenge(challenge, button) {
+  if (!window.confirm(`Trocar "${challenge.title}" por outro desafio ${challengeDifficultyLabels[challenge.difficulty].toLowerCase()}? Você só pode trocar uma vez.`)) return;
+  button.disabled = true;
+  try {
+    const board = await requestAlbumJson(`/api/album/challenges/${challenge.id}/swap`, { method: "POST" });
+    renderChallenges(board);
+    showToast("Pronto! Seu novo desafio já está no lugar.");
+  } catch (error) {
+    button.disabled = false;
+    showToast(error.message || "Não foi possível trocar o desafio.");
+  }
+}
+
 function populateUploadChallenges(challenges) {
   if (!uploadChallengeSelect || !uploadChallengeField) return;
   const previousValue = uploadChallengeSelect.value;
   const openChallenges = challenges.filter((challenge) => challenge.active);
   uploadChallengeSelect.replaceChildren(new Option("Nenhum, só quero compartilhar", ""));
   openChallenges.forEach((challenge) => {
-    const label = `${challenge.title} · ${formatChallengePoints(challenge.points)}${challenge.completedByMe ? " ✓" : ""}`;
+    const level = challenge.scope === "all" ? "Para todos" : challengeDifficultyLabels[challenge.difficulty];
+    const label = `${level}: ${challenge.title}${challenge.completedByMe ? " ✓" : ""}`;
     uploadChallengeSelect.append(new Option(label, challenge.id));
   });
   uploadChallengeSelect.value = openChallenges.some((challenge) => challenge.id === previousValue) ? previousValue : "";
@@ -2094,15 +2145,28 @@ function createChallengeCard(challenge) {
   card.setAttribute("role", "listitem");
   card.classList.toggle("is-done", challenge.completedByMe);
   card.classList.toggle("is-closed", !challenge.active);
+  card.dataset.difficulty = challenge.difficulty;
+
+  const badges = document.createElement("div");
+  badges.className = "challenge-badges";
+  const level = document.createElement("span");
+  level.className = "challenge-level";
+  level.textContent = challenge.scope === "all"
+    ? `Para todos · ${challengeScoreValue(challenge)} pts`
+    : `${challengeDifficultyLabels[challenge.difficulty]} · ${challengeScoreValue(challenge)} pts`;
+  badges.append(level);
+  if (challenge.couple || challenge.wedding) {
+    const couple = document.createElement("span");
+    couple.className = "challenge-couple";
+    couple.textContent = challenge.couple ? "💍 Com os noivos" : "📸 Casamento";
+    badges.append(couple);
+  }
 
   const top = document.createElement("div");
   top.className = "challenge-card-top";
   const title = document.createElement("h3");
   title.textContent = challenge.title;
-  const points = document.createElement("span");
-  points.className = "challenge-points";
-  points.textContent = formatChallengePoints(challenge.points);
-  top.append(title, points);
+  top.append(title);
 
   const description = document.createElement("p");
   description.textContent = challenge.description;
@@ -2111,7 +2175,11 @@ function createChallengeCard(challenge) {
   footer.className = "challenge-card-footer";
   const status = document.createElement("span");
   status.className = "challenge-status";
-  if (challenge.completedByMe) status.textContent = "✓ Você completou";
+  if (albumIsAdmin) {
+    const assigned = challenge.scope === "all" ? "para todos" : `sorteado para ${challenge.assignedCount || 0}`;
+    const limit = challenge.maxAssignees ? ` (máx. ${challenge.maxAssignees})` : "";
+    status.textContent = `${challenge.active ? "" : "Encerrado · "}${assigned}${limit} · ${challenge.completedCount} completaram`;
+  } else if (challenge.completedByMe) status.textContent = "✓ Você completou";
   else if (!challenge.active) status.textContent = "Encerrado";
   else if (challenge.completedCount) {
     status.textContent = `${challenge.completedCount} ${challenge.completedCount === 1 ? "pessoa completou" : "pessoas completaram"}`;
@@ -2127,6 +2195,18 @@ function createChallengeCard(challenge) {
     footer.append(action);
   }
 
+  const canSwap = !albumIsAdmin && challenge.active && challenge.scope === "draw" && !challenge.completedByMe
+    && latestChallengeBoard?.me?.swapsLeft > 0;
+  if (canSwap) {
+    const swap = document.createElement("button");
+    swap.type = "button";
+    swap.className = "challenge-swap";
+    swap.textContent = "Trocar";
+    swap.title = "Você pode trocar 1 desafio";
+    swap.addEventListener("click", () => swapChallenge(challenge, swap));
+    footer.append(swap);
+  }
+
   if (albumIsAdmin) {
     const edit = document.createElement("button");
     edit.type = "button";
@@ -2136,54 +2216,115 @@ function createChallengeCard(challenge) {
     footer.append(edit);
   }
 
-  card.append(top);
+  card.append(badges, top);
   if (challenge.description) card.append(description);
   card.append(footer);
   return card;
 }
 
+const rankingPodiumSize = 3;
+let latestChallengeBoard = null;
+
+function isViewerEntry(entry) {
+  return foldGuestName(entry.guestName) === foldGuestName(albumSessionGuestName);
+}
+
+function foldGuestName(value) {
+  return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function describeScore(entry) {
+  const parts = [`${entry.completed} ${entry.completed === 1 ? "desafio" : "desafios"}`];
+  parts.push(`${entry.photos} ${entry.photos === 1 ? "foto" : "fotos"}`);
+  if (entry.speedBonus) parts.push(`+${entry.speedBonus} rapidez`);
+  return parts.join(" · ");
+}
+
+function createRankingItem(entry, { detailed = false } = {}) {
+  const item = document.createElement("li");
+  item.classList.toggle("is-me", isViewerEntry(entry));
+  if (entry.rank <= rankingPodiumSize) item.dataset.podium = String(entry.rank);
+  const position = document.createElement("span");
+  position.className = "ranking-position";
+  position.textContent = `${entry.rank}º`;
+  const body = document.createElement("span");
+  body.className = "ranking-body";
+  const name = document.createElement("span");
+  name.className = "ranking-name";
+  name.textContent = entry.guestName;
+  if (isViewerEntry(entry)) name.append(" (você)");
+  if (entry.withoutRsvp) {
+    const flag = document.createElement("small");
+    flag.className = "ranking-flag";
+    flag.textContent = " · sem confirmação";
+    flag.title = "Entrou pelo \"Não achei meu nome\"";
+    name.append(flag);
+  }
+  const detail = document.createElement("small");
+  detail.className = "ranking-detail";
+  detail.textContent = describeScore(entry);
+  body.append(name, detail);
+  const points = document.createElement("span");
+  points.className = "ranking-points";
+  points.textContent = detailed ? formatChallengePoints(entry.points) : `${entry.points} pts`;
+  item.append(position, body, points);
+  return item;
+}
+
 function renderRanking(board) {
-  const viewerKey = albumSessionGuestName.trim().toLowerCase();
-  rankingList.replaceChildren(...board.leaderboard.map((entry) => {
-    const item = document.createElement("li");
-    item.classList.toggle("is-me", entry.guestName.trim().toLowerCase() === viewerKey);
-    const position = document.createElement("span");
-    position.className = "ranking-position";
-    position.textContent = `${entry.rank}º`;
-    const name = document.createElement("span");
-    name.className = "ranking-name";
-    name.textContent = entry.guestName;
-    name.title = `${entry.completed} ${entry.completed === 1 ? "desafio" : "desafios"}`;
-    if (entry.withoutRsvp) {
-      const flag = document.createElement("small");
-      flag.className = "ranking-flag";
-      flag.textContent = " · sem confirmação";
-      name.append(flag);
-      name.title += " · entrou pelo \"Não achei meu nome\"";
-    }
-    const points = document.createElement("span");
-    points.className = "ranking-points";
-    points.textContent = formatChallengePoints(entry.points);
-    item.append(position, name, points);
-    return item;
-  }));
+  const podium = board.leaderboard.slice(0, rankingPodiumSize);
+  rankingList.replaceChildren(...podium.map((entry) => createRankingItem(entry)));
   rankingEmpty.hidden = board.leaderboard.length > 0;
+  rankingOpenButton.hidden = board.leaderboard.length === 0;
+  rankingOpenButton.textContent = board.leaderboard.length > rankingPodiumSize
+    ? `Ver ranking completo (${board.leaderboard.length})`
+    : "Ver ranking completo";
 
   const { me } = board;
-  const meIsListed = board.leaderboard.some((entry) => entry.rank === me.rank);
-  if (albumIsAdmin) {
-    rankingMe.hidden = false;
-    rankingMe.textContent = "Você vê o ranking completo. Os convidados veem só os 10 primeiros e a própria posição.";
-  } else if (!me.points) {
+  if (!me.rank) {
     rankingMe.hidden = board.leaderboard.length === 0;
-    rankingMe.textContent = "Complete um desafio para entrar no ranking.";
+    rankingMe.textContent = "Envie fotos e complete desafios para entrar no ranking.";
   } else {
-    rankingMe.hidden = meIsListed;
+    rankingMe.hidden = me.rank <= rankingPodiumSize;
     rankingMe.textContent = `Você está em ${me.rank}º lugar com ${formatChallengePoints(me.points)}.`;
   }
 }
 
+function renderFullRanking() {
+  const board = latestChallengeBoard;
+  if (!board) return;
+  const filter = foldGuestName(rankingFilter.value);
+  const entries = board.leaderboard.filter((entry) => !filter || foldGuestName(entry.guestName).includes(filter));
+  rankingFullList.replaceChildren(...entries.map((entry) => createRankingItem(entry, { detailed: true })));
+  rankingFullEmpty.hidden = entries.length > 0;
+}
+
+function renderScoreRules(rules) {
+  if (!rules) return;
+  ["easy", "medium", "hard"].forEach((level) => {
+    rankingDialog.querySelector(`[data-rule-${level}]`).textContent = formatChallengePoints(
+      (rules.difficultyPoints?.[level] || 1) * rules.pointsPerChallengePoint,
+    );
+  });
+  rankingDialog.querySelector("[data-rule-speed]").textContent = rules.speedBonuses.map((bonus) => `+${bonus}`).join(", ");
+  rankingDialog.querySelector("[data-rule-photo]").textContent = formatChallengePoints(rules.pointsPerPhoto);
+  rankingDialog.querySelector("[data-rule-photo-max]").textContent = formatChallengePoints(rules.maxPhotoPoints);
+}
+
+function openRankingDialog({ rulesOnly = false } = {}) {
+  rankingRules.hidden = !rulesOnly;
+  rankingFull.hidden = rulesOnly;
+  rankingDialogTitle.textContent = rulesOnly ? "Como funciona a pontuação" : "Ranking completo";
+  rankingFilter.value = "";
+  renderFullRanking();
+  if (!rankingDialog.open) rankingDialog.showModal();
+  if (!rulesOnly) {
+    rankingFullList.querySelector(".is-me")?.scrollIntoView({ block: "center" });
+  }
+}
+
 function renderChallenges(board) {
+  latestChallengeBoard = board;
   challengeById.clear();
   board.challenges.forEach((challenge) => challengeById.set(challenge.id, challenge));
 
@@ -2192,16 +2333,134 @@ function renderChallenges(board) {
   if (mobileChallengesLink) mobileChallengesLink.hidden = challengesSection.hidden;
   newChallengeButton.hidden = !albumIsAdmin;
 
-  challengesList.replaceChildren(...board.challenges.map(createChallengeCard));
+  challengesFilters.hidden = !albumIsAdmin;
+  if (albumIsAdmin) {
+    challengesCopy.textContent = `Vocês veem todos os ${board.challenges.length} desafios. Cada convidado recebe 1 fácil, 1 médio e 1 difícil, com pelo menos 1 de registrar o casamento e no máximo 1 indo até os noivos.`;
+  }
+  const visibleChallenges = albumIsAdmin
+    ? filterChallengesForAdmin(board.challenges)
+    : sortChallengesForViewer(board.challenges);
+  challengesList.replaceChildren(...visibleChallenges.map(createChallengeCard));
+  challengesList.scrollLeft = 0;
+  setupChallengesCarousel();
+
   challengesScore.replaceChildren();
   const score = document.createElement("strong");
   score.textContent = String(board.me.points);
-  challengesScore.append(score, `de ${board.totalPoints} pontos`);
+  challengesScore.append(score, board.me.points === 1 ? "ponto" : "pontos");
+  const doneCount = board.challenges.filter((challenge) => challenge.completedByMe).length;
+  challengesScore.append(` · ${doneCount}/${board.challenges.length} desafios`);
   if (board.me.rank) challengesScore.append(` · ${board.me.rank}º lugar`);
 
+  renderScoreRules(board.rules);
   renderRanking(board);
+  if (rankingDialog.open) renderFullRanking();
   populateUploadChallenges(board.challenges);
 }
+
+// Carrossel dos desafios: passa sozinho e pausa quando a pessoa interage.
+const challengesCarouselDelay = 4500;
+let challengesCarouselTimer;
+let challengesCarouselPaused = false;
+
+function getChallengeCardStep() {
+  const card = challengesList.querySelector(".challenge-card");
+  if (!card) return 0;
+  const gap = parseFloat(getComputedStyle(challengesList).columnGap) || 0;
+  return card.getBoundingClientRect().width + gap;
+}
+
+function challengesOverflow() {
+  return challengesList.scrollWidth - challengesList.clientWidth > 4;
+}
+
+function scrollChallenges(direction) {
+  const step = getChallengeCardStep();
+  if (!step) return;
+  const maxScroll = challengesList.scrollWidth - challengesList.clientWidth;
+  let target = challengesList.scrollLeft + direction * step;
+  if (direction > 0 && challengesList.scrollLeft >= maxScroll - 4) target = 0;
+  if (direction < 0 && challengesList.scrollLeft <= 4) target = maxScroll;
+  challengesList.scrollTo({ left: target, behavior: reducedMotion.matches ? "auto" : "smooth" });
+}
+
+function updateChallengeDots() {
+  const step = getChallengeCardStep();
+  const dots = Array.from(challengesDots.children);
+  if (!step || !dots.length) return;
+  const maxScroll = challengesList.scrollWidth - challengesList.clientWidth;
+  const atEnd = challengesList.scrollLeft >= maxScroll - 4;
+  const index = atEnd ? dots.length - 1 : Math.round(challengesList.scrollLeft / step);
+  dots.forEach((dot, dotIndex) => dot.classList.toggle("is-active", dotIndex === index));
+}
+
+function scheduleChallengesCarousel() {
+  window.clearTimeout(challengesCarouselTimer);
+  // Os noivos navegam pela lista inteira para administrar; para eles o carrossel não anda sozinho.
+  if (albumIsAdmin || challengesCarouselPaused || reducedMotion.matches || document.hidden || !challengesOverflow()) return;
+  challengesCarouselTimer = window.setTimeout(() => {
+    scrollChallenges(1);
+    scheduleChallengesCarousel();
+  }, challengesCarouselDelay);
+}
+
+function setupChallengesCarousel() {
+  const overflow = challengesOverflow();
+  challengesControls.hidden = !overflow;
+  const visibleCount = Math.max(1, Math.round(challengesList.clientWidth / (getChallengeCardStep() || 1)));
+  const positions = overflow ? Math.max(1, challengesList.children.length - visibleCount + 1) : 0;
+  // Com muitos desafios (visão dos noivos), as bolinhas viram poluição: ficam só as setas.
+  const dotCount = positions <= 12 ? positions : 0;
+  challengesDots.replaceChildren(...Array.from({ length: dotCount }, () => document.createElement("span")));
+  updateChallengeDots();
+  scheduleChallengesCarousel();
+}
+
+function pauseChallengesCarousel() {
+  challengesCarouselPaused = true;
+  window.clearTimeout(challengesCarouselTimer);
+}
+
+function resumeChallengesCarousel() {
+  challengesCarouselPaused = false;
+  scheduleChallengesCarousel();
+}
+
+challengesCarousel.addEventListener("mouseenter", pauseChallengesCarousel);
+challengesCarousel.addEventListener("mouseleave", resumeChallengesCarousel);
+challengesCarousel.addEventListener("focusin", pauseChallengesCarousel);
+challengesCarousel.addEventListener("focusout", resumeChallengesCarousel);
+challengesCarousel.addEventListener("touchstart", pauseChallengesCarousel, { passive: true });
+challengesCarousel.addEventListener("touchend", () => {
+  // Depois de arrastar com o dedo, espera um pouco antes de voltar a passar sozinho.
+  window.setTimeout(resumeChallengesCarousel, 6000);
+}, { passive: true });
+challengesList.addEventListener("scroll", () => window.requestAnimationFrame(updateChallengeDots), { passive: true });
+challengesPreviousButton.addEventListener("click", () => scrollChallenges(-1));
+challengesNextButton.addEventListener("click", () => scrollChallenges(1));
+document.addEventListener("visibilitychange", scheduleChallengesCarousel);
+window.addEventListener("resize", () => {
+  window.clearTimeout(challengesCarouselTimer);
+  window.requestAnimationFrame(setupChallengesCarousel);
+});
+
+challengesFilters.querySelectorAll("[data-challenge-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    activeChallengeFilter = button.dataset.challengeFilter;
+    challengesFilters.querySelectorAll("[data-challenge-filter]").forEach((other) => {
+      other.setAttribute("aria-pressed", String(other === button));
+    });
+    if (latestChallengeBoard) renderChallenges(latestChallengeBoard);
+  });
+});
+
+rankingOpenButton.addEventListener("click", () => openRankingDialog());
+rankingRulesButton.addEventListener("click", () => openRankingDialog({ rulesOnly: true }));
+rankingFilter.addEventListener("input", renderFullRanking);
+document.querySelector("[data-close-ranking]").addEventListener("click", () => rankingDialog.close());
+rankingDialog.addEventListener("click", (event) => {
+  if (event.target === rankingDialog) rankingDialog.close();
+});
 
 async function loadChallenges() {
   try {
@@ -2223,7 +2482,11 @@ function openChallengeEditor(challenge = null) {
   challengeDialogTitle.textContent = challenge ? "Editar desafio" : "Novo desafio";
   challengeForm.elements.title.value = challenge?.title || "";
   challengeForm.elements.description.value = challenge?.description || "";
-  challengeForm.elements.points.value = String(challenge?.points || 1);
+  challengeForm.elements.difficulty.value = challenge?.difficulty || "easy";
+  challengeForm.elements.scope.value = challenge?.scope || "draw";
+  challengeForm.elements.couple.checked = Boolean(challenge?.couple);
+  challengeForm.elements.wedding.checked = Boolean(challenge?.wedding);
+  challengeForm.elements.maxAssignees.value = challenge?.maxAssignees ? String(challenge.maxAssignees) : "";
   challengeDeleteButton.hidden = !challenge;
   challengeToggleButton.hidden = !challenge;
   challengeToggleButton.textContent = challenge?.active === false ? "Reabrir" : "Encerrar";
@@ -2266,7 +2529,11 @@ challengeForm?.addEventListener("submit", (event) => {
   runChallengeAction(challengeSaveButton, () => saveChallenge({
     title: String(formData.get("title") || ""),
     description: String(formData.get("description") || ""),
-    points: Number(formData.get("points") || 1),
+    difficulty: String(formData.get("difficulty") || "easy"),
+    scope: String(formData.get("scope") || "draw"),
+    couple: formData.get("couple") === "on",
+    wedding: formData.get("wedding") === "on",
+    maxAssignees: formData.get("maxAssignees") ? Number(formData.get("maxAssignees")) : null,
   }, editingChallengeId ? "Desafio atualizado." : "Desafio criado."));
 });
 

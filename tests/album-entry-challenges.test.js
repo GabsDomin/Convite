@@ -140,6 +140,8 @@ describe("álbum antes da abertura (28/11 às 15h)", () => {
     assert.deepEqual(entry.body.remembered, []);
 
     assert.deepEqual((await app.call("/api/album/guests?q=hala")).body.guests, ["Halanaia Vitória"]);
+    assert.deepEqual((await app.call("/api/album/guests?q=h")).body.guests, ["Halanaia Vitória"]);
+    assert.deepEqual((await app.call("/api/album/guests?q=l")).body.guests, []);
     assert.deepEqual((await app.call("/api/album/guests?q=livia")).body.guests, []);
 
     const guest = await enter(app, "Livia Fernandes", "list");
@@ -201,8 +203,10 @@ describe("álbum aberto", () => {
     await supabase?.close();
   });
 
-  test("busca ignora acento e caixa, exige 3 letras e acha por sobrenome", async () => {
-    assert.deepEqual((await app.call("/api/album/guests?q=li")).body.guests, []);
+  test("busca sugere desde a 1ª letra, ignora acento e caixa e acha por sobrenome", async () => {
+    assert.deepEqual((await app.call("/api/album/guests?q=%20")).body.guests, []);
+    assert.deepEqual((await app.call("/api/album/guests?q=l")).body.guests, ["Livia de Paula", "Livia Fernandes"]);
+    assert.deepEqual((await app.call("/api/album/guests?q=t")).body.guests, ["Tainá Antunes"]);
     assert.deepEqual((await app.call("/api/album/guests?q=livia")).body.guests, ["Livia de Paula", "Livia Fernandes"]);
     assert.deepEqual((await app.call(`/api/album/guests?q=${encodeURIComponent("LÍVIA fer")}`)).body.guests, ["Livia Fernandes"]);
     assert.deepEqual((await app.call("/api/album/guests?q=taina")).body.guests, ["Tainá Antunes"]);
@@ -260,79 +264,107 @@ describe("álbum aberto", () => {
     assert.equal(bride.body.code, "admin_password");
   });
 
-  test("desafios: noivos criam, convidados pontuam e o ranking ordena e desempata", async () => {
-    const guestCookie = (await enter(app, "Livia Fernandes", "list")).sessionCookie;
-    const forbidden = await app.call("/api/album/challenges", {
-      method: "POST",
-      body: { title: "Foto com o noivo" },
-      cookie: guestCookie,
-    });
-    assert.equal(forbidden.status, 403);
-
-    const create = async (title, points) => {
-      const response = await app.call("/api/album/challenges", {
-        method: "POST",
-        body: { title, description: "", points },
-        cookie: coupleCookie,
-      });
-      assert.equal(response.status, 201, JSON.stringify(response.body));
-      return response.body.challenge;
-    };
-    const noivo = await create("Foto com o noivo", 1);
-    const alianca = await create("Foto com a aliança", 3);
-
-    const invalidPoints = await app.call("/api/album/challenges", {
-      method: "POST",
-      body: { title: "Foto inválida", points: 0 },
-      cookie: coupleCookie,
-    });
-    assert.equal(invalidPoints.status, 400);
-
-    // Upload para desafio: a assinatura aceita o desafio aberto.
-    const signature = await app.call("/api/album/upload-signature", {
-      method: "POST",
-      cookie: guestCookie,
-      body: {
-        category: "Festa",
-        challengeId: alianca.id,
-        contentHash: "b".repeat(64),
-        fileName: "alianca.jpg",
-        fileType: "image/jpeg",
-        fileSize: 1_000_000,
-      },
-    });
-    assert.equal(signature.status, 200, JSON.stringify(signature.body));
-
-    const proof = (guestName, challengeId) => supabase.insert("album_media", {
+  function proof(guestName, challengeId, label = Math.random().toString(16).slice(2)) {
+    return supabase.insert("album_media", {
       guest_name: guestName,
       category: "Festa",
       storage_provider: "r2",
-      storage_key: `gab-naia/album/originals/${Math.random().toString(16).slice(2)}.jpg`,
+      storage_key: `gab-naia/album/originals/${label}.jpg`,
       resource_type: "image",
       mime_type: "image/jpeg",
       bytes: 1000,
       backup_status: "pending",
       challenge_id: challengeId,
     });
-    proof("Tainá Antunes", noivo.id);
-    proof("Livia Fernandes", alianca.id);
-    proof("Livia Fernandes", alianca.id); // segunda prova do mesmo desafio não soma
-    proof("Maria Nova Silva", alianca.id);
-    proof("Livia Fernandes", noivo.id);
-    const lateMedia = proof("Maria Nova Silva", noivo.id);
+  }
 
-    const board = (await app.call("/api/album/challenges", { cookie: guestCookie })).body;
-    assert.equal(board.totalPoints, 4);
+  async function createChallenge(body) {
+    const response = await app.call("/api/album/challenges", { method: "POST", body, cookie: coupleCookie });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    return response.body.challenge;
+  }
+
+  const board = async (cookie) => (await app.call("/api/album/challenges", { cookie })).body;
+  const signature = (cookie, challengeId, hash) => app.call("/api/album/upload-signature", {
+    method: "POST",
+    cookie,
+    body: { category: "Festa", challengeId, contentHash: hash, fileName: "foto.jpg", fileType: "image/jpeg", fileSize: 1_000_000 },
+  });
+
+  test("desafios: sorteio de 1 fácil, 1 médio e 1 difícil, pontos por dificuldade e ranking", async () => {
+    const livia = (await enter(app, "Livia Fernandes", "list")).sessionCookie;
+    const maria = (await enter(app, "Maria Nova Silva", "list")).sessionCookie;
+    const taina = (await enter(app, "Tainá Antunes", "list")).sessionCookie;
+
+    const forbidden = await app.call("/api/album/challenges", { method: "POST", body: { title: "O bolo" }, cookie: livia });
+    assert.equal(forbidden.status, 403);
+    const invalid = await app.call("/api/album/challenges", {
+      method: "POST",
+      body: { title: "Foto inválida", difficulty: "impossível" },
+      cookie: coupleCookie,
+    });
+    assert.equal(invalid.status, 400);
+
+    // Um desafio por dificuldade: o sorteio é determinístico e todos recebem os três.
+    const easy = await createChallenge({ title: "O bolo", difficulty: "easy" });
+    const medium = await createChallenge({ title: "Selfie com a mesa", difficulty: "medium" });
+    const hard = await createChallenge({ title: "Foto de pulo", difficulty: "hard" });
+    assert.deepEqual([easy.points, medium.points, hard.points], [1, 2, 3]);
+
+    for (const cookie of [livia, maria, taina]) {
+      const mine = await board(cookie);
+      assert.deepEqual(mine.challenges.map((challenge) => challenge.difficulty).sort(), ["easy", "hard", "medium"]);
+      assert.equal(mine.me.swapsLeft, 1);
+    }
+    assert.equal(supabase.state.album_challenge_assignments.length, 9);
+    // Abrir de novo não sorteia mais nada.
+    await board(livia);
+    assert.equal(supabase.state.album_challenge_assignments.length, 9);
+
+    const coupleView = await board(coupleCookie);
+    assert.equal(coupleView.challenges.length, 3);
+    assert.deepEqual(coupleView.challenges.map((challenge) => challenge.assignedCount), [3, 3, 3]);
+    assert.equal(coupleView.me.swapsLeft, 0);
+
+    assert.equal((await signature(livia, hard.id, "b".repeat(64))).status, 200);
+
+    proof("Tainá Antunes", easy.id);
+    proof("Livia Fernandes", hard.id);
+    proof("Livia Fernandes", hard.id); // segunda prova do mesmo desafio não soma
+    proof("Maria Nova Silva", hard.id);
+    proof("Livia Fernandes", easy.id);
+    const lateMedia = proof("Maria Nova Silva", easy.id);
+
+    // Pontuação = desafios (fácil 10, médio 20, difícil 30) + rapidez (+3/+2/+1 por desafio) + fotos (1 cada, até 15).
+    // Livia: 30 + 10 | 1ª no difícil (+3), 2ª no fácil (+2) | 3 fotos = 48
+    // Maria: 30 + 10 | 2ª no difícil (+2), 3ª no fácil (+1) | 2 fotos = 45
+    // Tainá: 10      | 1ª no fácil (+3)                    | 1 foto  = 14
+    const result = await board(livia);
     assert.deepEqual(
-      board.leaderboard.map(({ guestName, points, rank }) => [rank, guestName, points]),
-      [[1, "Livia Fernandes", 4], [2, "Maria Nova Silva", 4], [3, "Tainá Antunes", 1]],
+      result.leaderboard.map(({ guestName, points, rank }) => [rank, guestName, points]),
+      [[1, "Livia Fernandes", 48], [2, "Maria Nova Silva", 45], [3, "Tainá Antunes", 14]],
     );
-    assert.deepEqual(board.me, { points: 4, completed: 2, rank: 1 });
-    assert.equal(board.challenges.find((challenge) => challenge.id === alianca.id).completedCount, 2);
-    assert.equal(board.challenges.every((challenge) => challenge.completedByMe), true);
-    assert.equal("withoutRsvp" in board.leaderboard[0], false);
+    assert.deepEqual(result.me, {
+      points: 48,
+      completed: 2,
+      challengePoints: 40,
+      speedBonus: 5,
+      photos: 3,
+      photoPoints: 3,
+      rank: 1,
+      swapsLeft: 1,
+    });
+    assert.deepEqual(result.rules, {
+      pointsPerChallengePoint: 10,
+      speedBonuses: [3, 2, 1],
+      pointsPerPhoto: 1,
+      maxPhotoPoints: 15,
+      difficultyPoints: { easy: 1, medium: 2, hard: 3 },
+    });
+    assert.equal(result.challenges.find((challenge) => challenge.id === hard.id).completedCount, 2);
+    assert.equal("withoutRsvp" in result.leaderboard[0], false);
 
-    const coupleBoard = (await app.call("/api/album/challenges", { cookie: coupleCookie })).body;
+    const coupleBoard = await board(coupleCookie);
     assert.deepEqual(
       coupleBoard.leaderboard.map((entry) => [entry.guestName, entry.withoutRsvp]),
       [["Livia Fernandes", false], ["Maria Nova Silva", true], ["Tainá Antunes", false]],
@@ -346,70 +378,122 @@ describe("álbum aberto", () => {
     });
     assert.equal(unlink.status, 200);
     assert.equal(unlink.body.media.challengeId, null);
-    const afterUnlink = (await app.call("/api/album/challenges", { cookie: guestCookie })).body;
-    assert.deepEqual(afterUnlink.leaderboard.find((entry) => entry.guestName === "Maria Nova Silva").points, 3);
+    // Maria perde o fácil (10) e o bônus de 3ª (+1), mas a foto continua contando.
+    assert.equal((await board(livia)).leaderboard.find((entry) => entry.guestName === "Maria Nova Silva").points, 34);
 
     // Encerrado: não aceita novas fotos, mas os pontos continuam.
-    const close = await app.call(`/api/album/challenges/${alianca.id}`, {
+    const close = await app.call(`/api/album/challenges/${hard.id}`, {
       method: "PATCH",
       body: { active: false },
       cookie: coupleCookie,
     });
     assert.equal(close.status, 200);
     assert.equal(close.body.challenge.active, false);
-    const closedUpload = await app.call("/api/album/upload-signature", {
-      method: "POST",
-      cookie: guestCookie,
-      body: {
-        category: "Festa",
-        challengeId: alianca.id,
-        contentHash: "c".repeat(64),
-        fileName: "alianca2.jpg",
-        fileType: "image/jpeg",
-        fileSize: 1_000_000,
-      },
-    });
-    assert.equal(closedUpload.status, 409);
-    const afterClose = (await app.call("/api/album/challenges", { cookie: guestCookie })).body;
-    assert.equal(afterClose.me.points, 4);
+    assert.equal((await signature(livia, hard.id, "c".repeat(64))).status, 409);
+    assert.equal((await board(livia)).me.points, 48);
 
     // Excluído: a foto fica no álbum, mas para de contar.
-    const remove = await app.call(`/api/album/challenges/${alianca.id}`, { method: "DELETE", cookie: coupleCookie });
+    const remove = await app.call(`/api/album/challenges/${hard.id}`, { method: "DELETE", cookie: coupleCookie });
     assert.equal(remove.status, 200);
-    const afterDelete = (await app.call("/api/album/challenges", { cookie: guestCookie })).body;
-    assert.equal(afterDelete.totalPoints, 1);
-    assert.equal(afterDelete.me.points, 1);
+    // Livia fica com o fácil (10), 2ª no fácil (+2) e 3 fotos = 15.
+    assert.equal((await board(livia)).me.points, 15);
     assert.equal(supabase.state.album_media.length, 6);
+    const media = (await app.call("/api/album/media", { cookie: livia })).body.media;
+    assert.equal(media.filter((item) => item.challengeId === easy.id).length, 2);
 
-    const media = (await app.call("/api/album/media", { cookie: guestCookie })).body.media;
-    assert.equal(media.length, 6);
-    assert.equal(media.filter((item) => item.challengeId === noivo.id).length, 2);
+    // Desafio que não foi sorteado para a pessoa: não aceita foto nem conta ponto.
+    const otherEasy = await createChallenge({ title: "A lembrancinha", difficulty: "easy" });
+    assert.equal((await signature(livia, otherEasy.id, "d".repeat(64))).status, 403);
+    proof("Livia Fernandes", otherEasy.id);
+    assert.equal((await board(livia)).me.points, 16); // só +1 da foto
+
+    // Desafio "para todos": aparece para todo mundo, além dos sorteados.
+    const everyone = await createChallenge({ title: "Brinde geral", difficulty: "medium", scope: "all" });
+    const withEveryone = await board(taina);
+    assert.ok(withEveryone.challenges.some((challenge) => challenge.id === everyone.id));
+    assert.equal((await signature(taina, everyone.id, "e".repeat(64))).status, 200);
   });
 
-  test("convidado vê só os 10 primeiros do ranking; os noivos veem todos", async () => {
-    const challenge = (await app.call("/api/album/challenges", {
-      method: "POST",
-      body: { title: "Foto com a noiva", points: 1 },
-      cookie: coupleCookie,
-    })).body.challenge;
-    for (let index = 0; index < 12; index += 1) {
-      supabase.insert("album_media", {
-        guest_name: `Convidado Numero${String(index).padStart(2, "0")}`,
-        category: "Festa",
-        storage_provider: "r2",
-        storage_key: `gab-naia/album/originals/extra-${index}.jpg`,
-        resource_type: "image",
-        mime_type: "image/jpeg",
-        bytes: 1000,
-        backup_status: "pending",
-        challenge_id: challenge.id,
-      });
+  test("troca: só 1 por convidado, só de desafio não completado e por outro da mesma dificuldade", async () => {
+    await createChallenge({ title: "Coração com as mãos", difficulty: "medium" });
+    const joice = (await enter(app, "Joice de Paula Silva", "list")).sessionCookie;
+    const before = await board(joice);
+    const myMedium = before.challenges.find((challenge) => challenge.difficulty === "medium" && challenge.scope === "draw");
+    assert.ok(myMedium);
+
+    const swapped = await app.call(`/api/album/challenges/${myMedium.id}/swap`, { method: "POST", cookie: joice });
+    assert.equal(swapped.status, 200, JSON.stringify(swapped.body));
+    const newMedium = swapped.body.challenges.find((challenge) => challenge.difficulty === "medium" && challenge.scope === "draw");
+    assert.ok(newMedium, "deveria receber outro médio no lugar");
+    assert.notEqual(newMedium.id, myMedium.id);
+    assert.equal(swapped.body.me.swapsLeft, 0);
+
+    const secondSwap = await app.call(`/api/album/challenges/${newMedium.id}/swap`, { method: "POST", cookie: joice });
+    assert.equal(secondSwap.status, 409);
+    assert.match(secondSwap.body.error, /já usou/i);
+
+    // Livia já completou o fácil: não pode trocar.
+    const livia = (await enter(app, "Livia Fernandes", "list")).sessionCookie;
+    const liviaEasy = (await board(livia)).challenges.find((challenge) => challenge.completedByMe);
+    const blocked = await app.call(`/api/album/challenges/${liviaEasy.id}/swap`, { method: "POST", cookie: livia });
+    assert.equal(blocked.status, 409);
+    assert.match(blocked.body.error, /já completou/i);
+  });
+
+  test("desafios com os noivos: no máximo 1 por convidado e respeitando o limite de pessoas", async () => {
+    const coupleEasy = await createChallenge({ title: "Os noivos de longe", difficulty: "easy", couple: true, maxAssignees: 2 });
+    const coupleMedium = await createChallenge({ title: "Foto com a noiva", difficulty: "medium", couple: true });
+    // O difícil do teste anterior foi excluído; sem um difícil ativo não há o que sortear.
+    await createChallenge({ title: "Três gerações juntas", difficulty: "hard" });
+    // Registrar o casamento do próprio lugar: sem limite, garante 1 para todos quando os 💍 esgotam.
+    const ceremony = await createChallenge({ title: "A troca de alianças", difficulty: "medium", wedding: true });
+    assert.equal(ceremony.wedding, true);
+    assert.equal(coupleEasy.wedding, true); // ir até os noivos também é registrar o casamento
+    assert.equal(coupleEasy.maxAssignees, 2);
+    assert.equal(coupleMedium.maxAssignees, 4); // padrão para desafios com os noivos
+
+    // Acesso criado pelo "Não achei meu nome" já sai com os 3 desafios, sem precisar abrir o álbum.
+    for (let index = 0; index < 6; index += 1) {
+      await enter(app, `Convidado Sorteio${index}`, "new");
+      const mine = supabase.state.album_challenge_assignments
+        .filter((row) => row.guest_key === `convidado sorteio${index}` && row.active);
+      assert.equal(mine.length, 3, `Convidado Sorteio${index} deveria ter 3 desafios`);
     }
-    const guestCookie = (await enter(app, "Joice de Paula Silva", "list")).sessionCookie;
-    const guestBoard = (await app.call("/api/album/challenges", { cookie: guestCookie })).body;
-    assert.equal(guestBoard.leaderboard.length, 10);
+    const challengeById = new Map(supabase.state.album_challenges.map((challenge) => [challenge.id, challenge]));
+    const activeRows = supabase.state.album_challenge_assignments.filter((row) => row.active);
+    assert.ok(activeRows.filter((row) => row.challenge_id === coupleEasy.id).length <= 2);
+    assert.ok(activeRows.filter((row) => row.challenge_id === coupleMedium.id).length <= 4);
+    const couplePerGuest = new Map();
+    for (const row of activeRows) {
+      if (!challengeById.get(row.challenge_id)?.couple) continue;
+      couplePerGuest.set(row.guest_key, (couplePerGuest.get(row.guest_key) || 0) + 1);
+    }
+    assert.ok(couplePerGuest.size > 0, "algum convidado deveria receber desafio com os noivos");
+    assert.ok([...couplePerGuest.values()].every((count) => count === 1));
+    for (let index = 0; index < 6; index += 1) {
+      const weddingCount = activeRows
+        .filter((row) => row.guest_key === `convidado sorteio${index}`)
+        .filter((row) => challengeById.get(row.challenge_id)?.wedding).length;
+      assert.ok(weddingCount >= 1, `Convidado Sorteio${index} deveria ter 1 desafio de registrar o casamento`);
+    }
+  });
+
+  test("fotos têm teto de 15 pontos e todos veem o ranking completo", async () => {
+    const taina = (await enter(app, "Tainá Antunes", "list")).sessionCookie;
+    const before = (await board(taina)).me;
+    for (let index = 0; index < 20; index += 1) proof("Tainá Antunes", null, `spam-${index}`);
+    const after = (await board(taina)).me;
+    assert.equal(after.photos, before.photos + 20);
+    assert.equal(after.photoPoints, 15);
+    assert.equal(after.points - after.photoPoints, before.points - before.photoPoints);
+
+    for (let index = 0; index < 12; index += 1) proof(`Convidado Foto${String(index).padStart(2, "0")}`, null, `extra-${index}`);
+    const joice = (await enter(app, "Joice de Paula Silva", "list")).sessionCookie;
+    const guestBoard = await board(joice);
     assert.equal(guestBoard.me.rank, null);
-    const coupleBoard = (await app.call("/api/album/challenges", { cookie: coupleCookie })).body;
-    assert.ok(coupleBoard.leaderboard.length > 10);
+    assert.equal(guestBoard.leaderboard.some((entry) => "withoutRsvp" in entry), false);
+    const coupleBoard = await board(coupleCookie);
+    assert.equal(guestBoard.leaderboard.length, coupleBoard.leaderboard.length);
+    assert.ok(guestBoard.leaderboard.length > 12);
   });
 });

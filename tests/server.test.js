@@ -261,7 +261,7 @@ test("entrada sem senha nunca libera os noivos e valida a forma de entrada", asy
   assert.equal(entry.status, 200);
   assert.deepEqual((await entry.json()).remembered, []);
 
-  const shortSearch = await fetch(`${baseUrl}/api/album/guests?q=ab`);
+  const shortSearch = await fetch(`${baseUrl}/api/album/guests?q=%20`);
   assert.equal(shortSearch.status, 200);
   assert.deepEqual((await shortSearch.json()).guests, []);
 

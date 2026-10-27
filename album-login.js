@@ -7,6 +7,8 @@ const searchInput = document.querySelector("[data-guest-search]");
 const searchOptions = document.querySelector("[data-guest-options]");
 const searchHint = document.querySelector("[data-search-hint]");
 const searchSubmit = document.querySelector("[data-search-submit]");
+const searchClear = document.querySelector("[data-search-clear]");
+const defaultSearchHint = "Comece a digitar e toque no seu nome.";
 const newForm = document.querySelector('[data-step="new"]');
 const newNameInput = document.querySelector("[data-new-name]");
 const newSubmit = document.querySelector("[data-new-submit]");
@@ -53,6 +55,7 @@ function resetPasswordPrompt() {
   passwordRequired = false;
   passwordField.hidden = true;
   passwordInput.value = "";
+  searchSubmit.hidden = true;
 }
 
 // Nome dos noivos: a senha aparece na própria busca, logo abaixo do nome.
@@ -60,8 +63,10 @@ function askPassword(guestName) {
   showStep(entryState.publicOpen ? "search" : "closed");
   selectedGuestName = guestName;
   searchInput.value = guestName;
+  searchClear.hidden = false;
   passwordRequired = true;
   passwordField.hidden = false;
+  searchSubmit.hidden = false;
   searchSubmit.disabled = false;
   searchSubmit.textContent = "Entrar";
   searchHint.textContent = "Digite a senha dos noivos.";
@@ -165,12 +170,38 @@ function setOptionsExpanded(expanded) {
 }
 
 // Tocar no nome já entra; se for um dos noivos, o servidor pede a senha.
-function selectGuest(name) {
+async function selectGuest(name) {
   selectedGuestName = name;
   searchInput.value = name;
+  searchClear.hidden = false;
   setOptionsExpanded(false);
-  searchHint.textContent = "Não é você? Apague e procure de novo.";
-  enterAlbum(name, "list", searchSubmit);
+  searchHint.textContent = `Entrando como ${name}...`;
+  const handled = await enterAlbum(name, "list", searchSubmit);
+  if (!handled) searchHint.textContent = defaultSearchHint;
+}
+
+function getInitials(name) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "") + (parts.length > 1 ? parts.at(-1)[0] : "")).toUpperCase();
+}
+
+function foldAccents(value) {
+  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+// Destaca o começo de cada palavra que bate com o que foi digitado, ignorando acentos.
+function appendHighlightedName(target, name, query) {
+  const terms = foldAccents(query).split(/\s+/).filter(Boolean);
+  name.split(/(\s+)/).forEach((word) => {
+    const term = /\S/.test(word) ? terms.find((candidate) => foldAccents(word).startsWith(candidate)) : null;
+    if (!term) {
+      target.append(word);
+      return;
+    }
+    const mark = document.createElement("mark");
+    mark.textContent = word.slice(0, term.length);
+    target.append(mark, word.slice(term.length));
+  });
 }
 
 function highlightOption(index) {
@@ -184,13 +215,21 @@ function highlightOption(index) {
   options[activeOptionIndex].scrollIntoView({ block: "nearest" });
 }
 
-function renderOptions(names) {
+function renderOptions(names, query) {
   searchOptions.replaceChildren(...names.map((name, index) => {
     const option = document.createElement("li");
     option.id = `album-guest-option-${index}`;
+    option.dataset.name = name;
     option.setAttribute("role", "option");
     option.setAttribute("aria-selected", "false");
-    option.textContent = name;
+    const avatar = document.createElement("span");
+    avatar.className = "album-login-option-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = getInitials(name);
+    const label = document.createElement("span");
+    label.className = "album-login-option-name";
+    appendHighlightedName(label, name, query);
+    option.append(avatar, label);
     // mousedown evita perder o foco do campo antes do clique ser registrado.
     option.addEventListener("mousedown", (event) => {
       event.preventDefault();
@@ -209,8 +248,8 @@ async function searchGuests(query) {
     if (requestId !== searchRequestId) return;
     if (!response.ok) throw new Error(payload.error || "Não foi possível buscar os nomes.");
     const guests = Array.isArray(payload.guests) ? payload.guests : [];
-    renderOptions(guests);
-    if (guests.length) searchHint.textContent = "Toque no seu nome.";
+    renderOptions(guests, query);
+    if (guests.length) searchHint.textContent = guests.length >= 8 ? "Continue digitando para achar mais rápido." : "Toque no seu nome.";
     else if (!entryState.publicOpen) searchHint.textContent = "O álbum ainda não abriu para os convidados.";
     else searchHint.textContent = "Nenhum nome encontrado. Confira a grafia ou toque em \"Não achei meu nome\".";
   } catch (error) {
@@ -224,18 +263,26 @@ searchInput.addEventListener("input", () => {
   selectedGuestName = "";
   resetPasswordPrompt();
   showLoginError();
-  searchSubmit.disabled = true;
-  searchSubmit.textContent = "Entrar no álbum";
   window.clearTimeout(searchTimer);
   const query = searchInput.value.trim();
-  if (query.replace(/\s/g, "").length < 3) {
+  searchClear.hidden = !searchInput.value;
+  if (!query) {
     searchRequestId += 1;
     setOptionsExpanded(false);
-    searchHint.textContent = "Digite pelo menos 3 letras.";
+    searchHint.textContent = defaultSearchHint;
     return;
   }
-  searchHint.textContent = "Procurando...";
-  searchTimer = window.setTimeout(() => searchGuests(query), 220);
+  searchTimer = window.setTimeout(() => searchGuests(query), 120);
+});
+
+searchInput.addEventListener("focus", () => {
+  if (searchOptions.children.length && searchInput.value.trim() && !selectedGuestName) setOptionsExpanded(true);
+});
+
+searchClear.addEventListener("click", () => {
+  searchInput.value = "";
+  searchInput.dispatchEvent(new Event("input"));
+  searchInput.focus();
 });
 
 searchInput.addEventListener("keydown", (event) => {
@@ -248,7 +295,7 @@ searchInput.addEventListener("keydown", (event) => {
     highlightOption(activeOptionIndex - 1);
   } else if (event.key === "Enter" && activeOptionIndex >= 0) {
     event.preventDefault();
-    selectGuest(searchOptions.children[activeOptionIndex].textContent);
+    selectGuest(searchOptions.children[activeOptionIndex].dataset.name);
   } else if (event.key === "Escape") {
     setOptionsExpanded(false);
   }
@@ -263,6 +310,11 @@ searchForm.addEventListener("submit", (event) => {
     return;
   }
   if (!selectedGuestName) {
+    const firstOption = searchOptions.firstElementChild;
+    if (firstOption && !searchOptions.hidden && searchOptions.children.length === 1) {
+      selectGuest(firstOption.dataset.name);
+      return;
+    }
     showLoginError("Escolha seu nome na lista ou toque em \"Não achei meu nome\".");
     return;
   }

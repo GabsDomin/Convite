@@ -12,7 +12,7 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/png" href="/assets/favicon.png" />
-    <link rel="stylesheet" href="/album.css?v=20261026-2" />
+    <link rel="stylesheet" href="/album.css?v=20261027-3" />
   </head>
   <body>
     <header class="album-topbar">
@@ -67,19 +67,43 @@
         <header class="challenges-intro">
           <div>
             <h2 id="challenges-title">Desafios</h2>
-            <p>Complete os desafios enviando a foto pelo álbum. Quem somar mais pontos ganha uma surpresa dos noivos.</p>
+            <p data-challenges-copy>Você recebeu 3 desafios: um fácil, um médio e um difícil. Complete enviando 1 foto para cada. Quem somar mais pontos ganha uma surpresa dos noivos.</p>
           </div>
           <div class="challenges-score" data-challenges-score aria-live="polite"></div>
         </header>
 
         <div class="challenges-layout">
-          <div class="challenges-list" data-challenges-list role="list"></div>
+          <div class="challenges-carousel" data-challenges-carousel aria-roledescription="carrossel" aria-label="Desafios">
+            <div class="gallery-filters challenges-filters" aria-label="Filtrar desafios" data-challenges-filters hidden>
+              <button type="button" data-challenge-filter="all" aria-pressed="true">Todos</button>
+              <button type="button" data-challenge-filter="easy" aria-pressed="false">Fácil</button>
+              <button type="button" data-challenge-filter="medium" aria-pressed="false">Médio</button>
+              <button type="button" data-challenge-filter="hard" aria-pressed="false">Difícil</button>
+              <button type="button" data-challenge-filter="wedding" aria-pressed="false">📸 Casamento</button>
+              <button type="button" data-challenge-filter="couple" aria-pressed="false">💍 Ir até os noivos</button>
+              <button type="button" data-challenge-filter="everyone" aria-pressed="false">Para todos</button>
+            </div>
+            <div class="challenges-list" data-challenges-list role="list" tabindex="0"></div>
+            <div class="challenges-carousel-controls" data-challenges-controls hidden>
+              <button class="challenges-arrow" type="button" aria-label="Desafio anterior" data-challenges-previous>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <div class="challenges-dots" data-challenges-dots aria-hidden="true"></div>
+              <button class="challenges-arrow" type="button" aria-label="Próximo desafio" data-challenges-next>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+              </button>
+            </div>
+          </div>
 
           <aside class="challenges-ranking" aria-labelledby="ranking-title">
             <h3 id="ranking-title">Ranking</h3>
-            <ol class="ranking-list" data-ranking-list></ol>
+            <ol class="ranking-podium" data-ranking-list></ol>
             <p class="ranking-empty" data-ranking-empty hidden>Ninguém pontuou ainda. Seja a primeira pessoa!</p>
             <p class="ranking-me" data-ranking-me hidden></p>
+            <div class="ranking-actions">
+              <button class="button secondary compact" type="button" data-open-ranking hidden>Ver ranking completo</button>
+              <button class="ranking-rules-link" type="button" data-open-rules>Como funciona a pontuação</button>
+            </div>
           </aside>
         </div>
 
@@ -265,15 +289,38 @@
 
         <label>
           Título
-          <input type="text" name="title" minlength="3" maxlength="80" required placeholder="Tire uma foto com o noivo" />
+          <input type="text" name="title" minlength="3" maxlength="80" required placeholder="O bolo" />
         </label>
         <label>
           Descrição (opcional)
-          <input type="text" name="description" maxlength="240" placeholder="Vale selfie!" />
+          <input type="text" name="description" maxlength="240" placeholder="Sem flash." />
         </label>
         <label>
-          Pontos
-          <input type="number" name="points" min="1" max="100" step="1" value="1" required />
+          Dificuldade
+          <select name="difficulty">
+            <option value="easy">Fácil · 10 pontos</option>
+            <option value="medium">Médio · 20 pontos</option>
+            <option value="hard">Difícil · 30 pontos</option>
+          </select>
+        </label>
+        <label>
+          Quem recebe
+          <select name="scope">
+            <option value="draw">Sorteio (cada convidado recebe 1 fácil, 1 médio e 1 difícil)</option>
+            <option value="all">Todos os convidados, além dos sorteados</option>
+          </select>
+        </label>
+        <label class="consent-row challenge-couple-row">
+          <input type="checkbox" name="wedding" />
+          <span>📸 Registra o casamento ou os noivos (todo convidado recebe pelo menos 1 desses)</span>
+        </label>
+        <label class="consent-row challenge-couple-row">
+          <input type="checkbox" name="couple" />
+          <span>💍 Exige ir até os noivos (cada convidado recebe no máximo 1 desses)</span>
+        </label>
+        <label data-challenge-max-field>
+          Máximo de pessoas sorteadas
+          <input type="number" name="maxAssignees" min="1" max="500" step="1" placeholder="Sem limite" />
         </label>
 
         <p class="form-error" data-challenge-error role="alert" hidden></p>
@@ -285,6 +332,37 @@
           <button class="button primary" type="submit" data-save-challenge>Salvar</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="upload-dialog ranking-dialog" data-ranking-dialog aria-labelledby="ranking-dialog-title">
+      <div class="upload-form">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow" data-ranking-dialog-eyebrow>Ranking dos desafios</span>
+            <h2 id="ranking-dialog-title" data-ranking-dialog-title>Ranking completo</h2>
+          </div>
+          <button class="dialog-close" type="button" aria-label="Fechar" data-close-ranking>×</button>
+        </div>
+
+        <div class="ranking-rules" data-ranking-rules hidden>
+          <p>A pontuação soma três coisas:</p>
+          <ul>
+            <li><strong>Desafios:</strong> fácil vale <span data-rule-easy></span>, médio <span data-rule-medium></span> e difícil <span data-rule-hard></span>.</li>
+            <li><strong>Rapidez:</strong> em cada desafio, os 3 primeiros a completar ganham <span data-rule-speed></span>.</li>
+            <li><strong>Fotos:</strong> cada foto ou vídeo enviado vale <span data-rule-photo></span>, até <span data-rule-photo-max></span>.</li>
+          </ul>
+          <p>No empate, fica na frente quem completou mais desafios, depois quem foi mais rápido.</p>
+        </div>
+
+        <div data-ranking-full>
+          <label class="ranking-filter">
+            <span class="visually-hidden">Procurar convidado no ranking</span>
+            <input type="search" placeholder="Procurar convidado" autocomplete="off" data-ranking-filter />
+          </label>
+          <ol class="ranking-full-list" data-ranking-full-list></ol>
+          <p class="ranking-empty" data-ranking-full-empty hidden>Ninguém encontrado.</p>
+        </div>
+      </div>
     </dialog>
 
     <dialog class="lightbox" data-lightbox aria-label="Visualização da memória">
@@ -359,6 +437,6 @@
     </nav>
 
     <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
-    <script src="/album.js?v=20261026-2" defer></script>
+    <script src="/album.js?v=20261027-3" defer></script>
   </body>
 </html>

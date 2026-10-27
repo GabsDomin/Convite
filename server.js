@@ -74,8 +74,18 @@ const albumUploadUrlTtlSeconds = 30 * 60;
 const albumSessionCookieName = "gab_naia_album_session";
 const albumSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 const albumMediaSelect = "id,guest_name,category,storage_provider,storage_key,public_id,resource_type,mime_type,format,version,bytes,width,height,duration,backup_status,content_hash,challenge_id,created_at";
-const albumChallengeSelect = "id,title,description,points,sort_order,active,created_at";
-const albumLeaderboardPublicSize = 10;
+const albumChallengeSelect = "id,title,description,points,sort_order,active,scope,difficulty,couple,wedding,max_assignees,created_at";
+// Cada convidado recebe um desafio de cada dificuldade; a dificuldade define os pontos.
+const albumChallengeDifficultyPoints = { easy: 1, medium: 2, hard: 3 };
+const albumChallengeSwapsPerGuest = 1;
+const albumCoupleChallengeDefaultMax = 4;
+// Pontuação do ranking: desafios valem mais, rapidez vira corrida por desafio e fotos têm teto.
+const albumScoreRules = {
+  pointsPerChallengePoint: 10,
+  speedBonuses: [3, 2, 1],
+  pointsPerPhoto: 1,
+  maxPhotoPoints: 15,
+};
 function parseGuestNameList(value) {
   return new Set(String(value).split(",").map(normalizeGuestName).filter(Boolean));
 }
@@ -702,16 +712,38 @@ function requireAlbumChallengeInput(body, { partial = false } = {}) {
   if (!partial || body.description !== undefined) {
     input.description = optionalText(body.description, "Descrição do desafio", 240) || null;
   }
-  if (!partial || body.points !== undefined) {
-    const points = body.points == null || body.points === "" ? 1 : Number(body.points);
-    if (!Number.isSafeInteger(points) || points < 1 || points > 100) {
-      throw new HttpError(400, "Os pontos do desafio devem ficar entre 1 e 100.");
+  if (!partial || body.difficulty !== undefined) {
+    const difficulty = body.difficulty == null || body.difficulty === "" ? "easy" : String(body.difficulty);
+    if (!Object.hasOwn(albumChallengeDifficultyPoints, difficulty)) {
+      throw new HttpError(400, "Escolha a dificuldade: fácil, médio ou difícil.");
     }
-    input.points = points;
+    input.difficulty = difficulty;
+    input.points = albumChallengeDifficultyPoints[difficulty];
   }
   if (body.active !== undefined) {
     if (typeof body.active !== "boolean") throw new HttpError(400, "Situação do desafio inválida.");
     input.active = body.active;
+  }
+  if (!partial || body.scope !== undefined) {
+    const scope = body.scope == null || body.scope === "" ? "draw" : String(body.scope);
+    if (!["draw", "all"].includes(scope)) throw new HttpError(400, "Escolha se o desafio é sorteado ou para todos.");
+    input.scope = scope;
+  }
+  if (!partial || body.couple !== undefined) {
+    if (body.couple != null && typeof body.couple !== "boolean") throw new HttpError(400, "Opção dos noivos inválida.");
+    input.couple = Boolean(body.couple);
+  }
+  if (body.wedding != null && typeof body.wedding !== "boolean") throw new HttpError(400, "Opção do casamento inválida.");
+  // Ir até os noivos também é registrar o casamento.
+  if (!partial || body.wedding !== undefined) input.wedding = Boolean(body.wedding) || Boolean(input.couple);
+  else if (input.couple) input.wedding = true;
+  if (!partial || body.maxAssignees !== undefined || body.couple !== undefined) {
+    const fallback = input.couple ? albumCoupleChallengeDefaultMax : null;
+    const max = body.maxAssignees == null || body.maxAssignees === "" ? fallback : Number(body.maxAssignees);
+    if (max != null && (!Number.isSafeInteger(max) || max < 1 || max > 500)) {
+      throw new HttpError(400, "O limite de pessoas deve ficar entre 1 e 500.");
+    }
+    input.max_assignees = max;
   }
   if (partial && !Object.keys(input).length) {
     throw new HttpError(400, "Nada para atualizar no desafio.");
@@ -1927,6 +1959,11 @@ function normalizeAlbumChallenge(challenge) {
     description: challenge.description || "",
     points: Number(challenge.points || 1),
     active: Boolean(challenge.active),
+    scope: challenge.scope === "all" ? "all" : "draw",
+    difficulty: Object.hasOwn(albumChallengeDifficultyPoints, challenge.difficulty) ? challenge.difficulty : "easy",
+    couple: Boolean(challenge.couple),
+    wedding: Boolean(challenge.wedding || challenge.couple),
+    maxAssignees: challenge.max_assignees == null ? null : Number(challenge.max_assignees),
   };
 }
 
@@ -1937,52 +1974,115 @@ async function readAlbumChallenges() {
   return Array.isArray(rows) ? rows : [];
 }
 
-async function requireOpenAlbumChallenge(challengeId) {
+// Convidado só envia foto para desafio "para todos" ou sorteado para ele; os noivos, para qualquer um.
+async function requireOpenAlbumChallenge(challengeId, guestName) {
   const rows = await readSupabaseTable(
-    `album_challenges?select=id,active&id=eq.${encodeURIComponent(challengeId)}&limit=1`,
+    `album_challenges?select=id,active,scope&id=eq.${encodeURIComponent(challengeId)}&limit=1`,
   );
   const challenge = Array.isArray(rows) ? rows[0] : rows;
   if (!challenge?.id) throw new HttpError(404, "Desafio não encontrado.");
   if (!challenge.active) throw new HttpError(409, "Este desafio já foi encerrado.");
+  if (challenge.scope !== "all" && !isAlbumAdmin(guestName)) {
+    const assigned = await readSupabaseTable(
+      `album_challenge_assignments?select=id&guest_key=eq.${encodeURIComponent(normalizeGuestName(guestName))}`
+      + `&challenge_id=eq.${encodeURIComponent(challenge.id)}&active=eq.true&limit=1`,
+    );
+    if (!assigned?.[0]?.id) throw new HttpError(403, "Este desafio não é um dos seus.");
+  }
   return challenge.id;
 }
 
-// Cada desafio conta uma vez por convidado, com a data da primeira prova enviada.
-// Empate em pontos vai para quem chegou primeiro à pontuação.
-function buildAlbumChallengeBoard(challengeRows, proofRows, viewerGuestName) {
+async function assignAlbumChallenges(guestName) {
+  return callSupabaseRpc("assign_album_challenges", {
+    p_guest_key: normalizeGuestName(guestName),
+    p_guest_name: guestName,
+  });
+}
+
+// Ranking a partir de todas as mídias do álbum:
+// - cada desafio conta uma vez por convidado, na data da primeira prova enviada;
+// - em cada desafio, os primeiros a completar ganham o bônus de rapidez;
+// - toda foto/vídeo soma, até o teto.
+// Desempate: mais desafios, mais bônus de rapidez e, por fim, quem chegou antes à pontuação.
+// Só conta desafio "para todos" ou sorteado para a pessoa.
+function buildAlbumChallengeBoard(challengeRows, mediaRows, viewerGuestName, { assignments = [], viewerIsAdmin = false } = {}) {
   const challenges = challengeRows.map(normalizeAlbumChallenge);
   const challengeById = new Map(challenges.map((challenge) => [challenge.id, challenge]));
-  const completionCount = new Map();
   const people = new Map();
+  const activeAssignments = new Set();
+  const assignedCount = new Map();
+  for (const row of assignments) {
+    if (!row.active) continue;
+    activeAssignments.add(`${row.guest_key}|${row.challenge_id}`);
+    assignedCount.set(row.challenge_id, (assignedCount.get(row.challenge_id) || 0) + 1);
+  }
+  const isEligible = (guestKey, challenge) => challenge.scope === "all"
+    || activeAssignments.has(`${guestKey}|${challenge.id}`);
 
-  for (const row of proofRows) {
-    const challenge = challengeById.get(row.challenge_id);
+  const sortedMedia = [...mediaRows].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  for (const row of sortedMedia) {
     const key = normalizeGuestName(row.guest_name);
-    if (!challenge || !key) continue;
-    const person = people.get(key) || { guestName: row.guest_name, completedAt: new Map() };
-    const previous = person.completedAt.get(challenge.id);
-    if (!previous || row.created_at < previous) person.completedAt.set(challenge.id, row.created_at);
+    if (!key) continue;
+    const person = people.get(key) || {
+      guestName: row.guest_name,
+      photos: 0,
+      lastPhotoAt: "",
+      completedAt: new Map(),
+      speedBonus: 0,
+    };
+    person.photos += 1;
+    person.lastPhotoAt = row.created_at;
+    const challenge = challengeById.get(row.challenge_id);
+    if (challenge && isEligible(key, challenge) && !person.completedAt.has(challenge.id)) {
+      person.completedAt.set(challenge.id, row.created_at);
+    }
     people.set(key, person);
   }
 
+  const completionsByChallenge = new Map();
+  people.forEach((person) => {
+    person.completedAt.forEach((completedAt, challengeId) => {
+      const list = completionsByChallenge.get(challengeId) || [];
+      list.push({ person, completedAt });
+      completionsByChallenge.set(challengeId, list);
+    });
+  });
+  completionsByChallenge.forEach((list) => {
+    list.sort((a, b) => a.completedAt.localeCompare(b.completedAt));
+    list.forEach(({ person }, index) => {
+      person.speedBonus += albumScoreRules.speedBonuses[index] || 0;
+    });
+  });
+
   const leaderboard = Array.from(people.values()).map((person) => {
-    let points = 0;
+    let challengePoints = 0;
     let reachedAt = "";
     person.completedAt.forEach((completedAt, challengeId) => {
-      points += challengeById.get(challengeId).points;
-      completionCount.set(challengeId, (completionCount.get(challengeId) || 0) + 1);
+      challengePoints += challengeById.get(challengeId).points * albumScoreRules.pointsPerChallengePoint;
       if (completedAt > reachedAt) reachedAt = completedAt;
     });
+    const photoPoints = Math.min(person.photos * albumScoreRules.pointsPerPhoto, albumScoreRules.maxPhotoPoints);
+    // A pontuação de fotos só para de crescer no teto; depois disso, novas fotos não mudam a data.
+    const photoReachedAt = person.photos * albumScoreRules.pointsPerPhoto <= albumScoreRules.maxPhotoPoints
+      ? person.lastPhotoAt
+      : "";
     return {
       guestName: person.guestName,
-      points,
+      points: challengePoints + person.speedBonus + photoPoints,
       completed: person.completedAt.size,
+      challengePoints,
+      speedBonus: person.speedBonus,
+      photos: person.photos,
+      photoPoints,
       completedIds: Array.from(person.completedAt.keys()),
-      reachedAt,
+      reachedAt: photoReachedAt > reachedAt ? photoReachedAt : reachedAt,
     };
   });
 
-  leaderboard.sort((a, b) => b.points - a.points || b.completed - a.completed || a.reachedAt.localeCompare(b.reachedAt));
+  leaderboard.sort((a, b) => b.points - a.points
+    || b.completed - a.completed
+    || b.speedBonus - a.speedBonus
+    || a.reachedAt.localeCompare(b.reachedAt));
   leaderboard.forEach((entry, index) => {
     entry.rank = index + 1;
   });
@@ -1990,29 +2090,46 @@ function buildAlbumChallengeBoard(challengeRows, proofRows, viewerGuestName) {
   const viewerKey = normalizeGuestName(viewerGuestName);
   const viewer = leaderboard.find((entry) => normalizeGuestName(entry.guestName) === viewerKey);
   const viewerCompleted = new Set(viewer?.completedIds || []);
+  const swapsUsed = assignments.filter((row) => row.guest_key === viewerKey && row.swapped).length;
 
   return {
-    challenges: challenges.map((challenge) => ({
-      ...challenge,
-      completedByMe: viewerCompleted.has(challenge.id),
-      completedCount: completionCount.get(challenge.id) || 0,
-    })),
-    leaderboard: leaderboard.map(({ completedIds, ...entry }) => entry),
+    // Os noivos veem e administram todos; cada convidado vê os seus e os "para todos".
+    challenges: challenges
+      .filter((challenge) => viewerIsAdmin || isEligible(viewerKey, challenge))
+      .map((challenge) => ({
+        ...challenge,
+        completedByMe: viewerCompleted.has(challenge.id),
+        completedCount: completionsByChallenge.get(challenge.id)?.length || 0,
+        ...(viewerIsAdmin ? { assignedCount: assignedCount.get(challenge.id) || 0 } : {}),
+      })),
+    leaderboard: leaderboard.map(({ completedIds, reachedAt, ...entry }) => entry),
     me: {
       points: viewer?.points || 0,
       completed: viewer?.completed || 0,
+      challengePoints: viewer?.challengePoints || 0,
+      speedBonus: viewer?.speedBonus || 0,
+      photos: viewer?.photos || 0,
+      photoPoints: viewer?.photoPoints || 0,
       rank: viewer?.rank || null,
+      swapsLeft: viewerIsAdmin ? 0 : Math.max(0, albumChallengeSwapsPerGuest - swapsUsed),
     },
-    totalPoints: challenges.reduce((sum, challenge) => sum + challenge.points, 0),
+    rules: { ...albumScoreRules, difficultyPoints: albumChallengeDifficultyPoints },
   };
 }
 
 async function loadAlbumChallengeBoard(viewerGuestName) {
-  const [challengeRows, proofRows] = await Promise.all([
+  const viewerIsAdmin = isAlbumAdmin(viewerGuestName);
+  // Os noivos não participam do sorteio; convidados recebem os 4 na primeira vez que abrem.
+  if (!viewerIsAdmin) await assignAlbumChallenges(viewerGuestName);
+  const [challengeRows, mediaRows, assignmentRows] = await Promise.all([
     readAlbumChallenges(),
-    readSupabaseTable("album_media?select=guest_name,challenge_id,created_at&challenge_id=not.is.null&limit=5000"),
+    readSupabaseTable("album_media?select=guest_name,challenge_id,created_at&order=created_at.asc&limit=10000"),
+    readSupabaseTable("album_challenge_assignments?select=guest_key,challenge_id,active,swapped&limit=10000"),
   ]);
-  return buildAlbumChallengeBoard(challengeRows, Array.isArray(proofRows) ? proofRows : [], viewerGuestName);
+  return buildAlbumChallengeBoard(challengeRows, Array.isArray(mediaRows) ? mediaRows : [], viewerGuestName, {
+    assignments: Array.isArray(assignmentRows) ? assignmentRows : [],
+    viewerIsAdmin,
+  });
 }
 
 let albumGuestDirectoryCache = { entries: null, expiresAt: 0 };
@@ -2447,8 +2564,8 @@ async function handleApi(request, response, pathname) {
       enforceRateLimit(request, "album-guest-search", 90, 60_000);
       if (!hasSupabaseConfig) throw new HttpError(503, "Confirmações ainda não estão disponíveis.");
       const query = String(new URL(request.url, "http://127.0.0.1").searchParams.get("q") || "").slice(0, 80);
-      // Busca só a partir de 3 letras e devolve poucos nomes, para não expor a lista inteira.
-      if (normalizeGuestName(query).replace(/ /g, "").length < 3) {
+      // Sugere desde a primeira letra, mas devolve poucos nomes por vez.
+      if (!normalizeGuestName(query)) {
         sendJson(response, 200, { guests: [] });
         return true;
       }
@@ -2495,6 +2612,13 @@ async function handleApi(request, response, pathname) {
         throw new HttpError(400, "Forma de entrada inválida.");
       }
       requireAlbumPublicEntry(guestName);
+
+      // Quem entra (inclusive acesso recém-criado) já recebe os desafios; se falhar, o álbum sorteia ao abrir.
+      try {
+        await assignAlbumChallenges(guestName);
+      } catch (error) {
+        console.error("assignAlbumChallenges:", error?.message || error);
+      }
 
       sendJson(response, 200, { ok: true, guestName, isAlbumAdmin: false }, {
         "Set-Cookie": albumSessionCookieHeader(createAlbumSessionToken(guestName)),
@@ -2655,7 +2779,7 @@ async function handleApi(request, response, pathname) {
       const file = requireAlbumFile(body);
       const contentHash = requireContentHash(body.contentHash);
       const requestedChallengeId = optionalAlbumChallengeId(body.challengeId);
-      const challengeId = requestedChallengeId ? await requireOpenAlbumChallenge(requestedChallengeId) : null;
+      const challengeId = requestedChallengeId ? await requireOpenAlbumChallenge(requestedChallengeId, guestName) : null;
       const storageKey = `${albumR2KeyPrefix}${randomUUID()}.${albumFileExtensions.get(file.fileType)}`;
       const expiresAt = Date.now() + albumUploadUrlTtlSeconds * 1000;
       const uploadToken = createAlbumUploadToken({
@@ -2738,14 +2862,12 @@ async function handleApi(request, response, pathname) {
       const session = requireAlbumSession(request);
       requireAlbumAccess(session);
       if (!hasSupabaseConfig) {
-        sendJson(response, 200, { challenges: [], leaderboard: [], me: { points: 0, completed: 0, rank: null }, totalPoints: 0 });
+        sendJson(response, 200, buildAlbumChallengeBoard([], [], session.guestName));
         return true;
       }
       const board = await loadAlbumChallengeBoard(session.guestName);
-      // O ranking completo fica com os noivos; convidados veem o pódio e a própria posição.
-      if (!isAlbumAdmin(session.guestName)) {
-        board.leaderboard = board.leaderboard.slice(0, albumLeaderboardPublicSize);
-      } else {
+      // Todos veem o ranking completo; só os noivos veem quem entrou sem confirmação.
+      if (isAlbumAdmin(session.guestName)) {
         const directory = await loadAlbumGuestDirectory().catch(() => new Map());
         board.leaderboard.forEach((entry) => {
           entry.withoutRsvp = directory.get(normalizeGuestName(entry.guestName))?.source !== "rsvp";
@@ -2794,6 +2916,37 @@ async function handleApi(request, response, pathname) {
       const updated = await patchSupabaseTable(filter, input);
       if (!updated?.[0]) throw new HttpError(404, "Desafio não encontrado.");
       sendJson(response, 200, { challenge: normalizeAlbumChallenge(updated[0]) });
+      return true;
+    }
+
+    const albumChallengeSwapMatch = pathname.match(/^\/api\/album\/challenges\/([0-9a-f-]{36})\/swap$/i);
+    if (request.method === "POST" && albumChallengeSwapMatch) {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "album-challenge-swap", 10, 10 * 60_000);
+      const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
+      if (isAlbumAdmin(session.guestName)) throw new HttpError(400, "Os noivos não participam do sorteio.");
+      if (!hasSupabaseConfig) throw new HttpError(503, "Supabase não está configurado no servidor.");
+      const challengeId = requireAlbumChallengeId(albumChallengeSwapMatch[1]);
+      const guestKey = normalizeGuestName(session.guestName);
+      // Desafio já completado não pode ser trocado, senão a pessoa ganharia os pontos e um desafio novo.
+      const proofs = await readSupabaseTable(
+        `album_media?select=guest_name&challenge_id=eq.${encodeURIComponent(challengeId)}&limit=5000`,
+      );
+      if ((Array.isArray(proofs) ? proofs : []).some((row) => normalizeGuestName(row.guest_name) === guestKey)) {
+        throw new HttpError(409, "Você já completou este desafio.");
+      }
+      try {
+        await callSupabaseRpc("swap_album_challenge", {
+          p_guest_key: guestKey,
+          p_guest_name: session.guestName,
+          p_challenge_id: challengeId,
+          p_max_swaps: albumChallengeSwapsPerGuest,
+        });
+      } catch (error) {
+        throw new HttpError(409, error.message || "Não foi possível trocar o desafio.");
+      }
+      sendJson(response, 200, await loadAlbumChallengeBoard(session.guestName));
       return true;
     }
 

@@ -12,7 +12,7 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/png" href="/assets/favicon.png" />
-    <link rel="stylesheet" href="/album.css?v=20261026-2" />
+    <link rel="stylesheet" href="/album.css?v=20261027-1" />
   </head>
   <body class="album-login-page">
     <main class="album-login">
@@ -38,26 +38,33 @@
         <form class="album-login-step album-login-form" data-step="search" novalidate hidden>
           <label for="album-guest-search">Seu nome</label>
           <div class="album-login-combobox">
+            <svg class="album-login-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
             <input
               id="album-guest-search"
               type="text"
               maxlength="80"
               autocomplete="off"
-              placeholder="Comece a digitar seu nome"
+              autocapitalize="words"
+              spellcheck="false"
+              enterkeyhint="search"
+              placeholder="Digite seu nome"
               role="combobox"
               aria-autocomplete="list"
               aria-expanded="false"
               aria-controls="album-guest-options"
               data-guest-search
             />
+            <button class="album-login-clear" type="button" aria-label="Limpar busca" data-search-clear hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+            </button>
             <ul class="album-login-options" id="album-guest-options" role="listbox" data-guest-options hidden></ul>
           </div>
-          <p class="album-login-hint" data-search-hint>Digite pelo menos 3 letras.</p>
+          <p class="album-login-hint" data-search-hint>Comece a digitar e toque no seu nome.</p>
           <label data-password-field hidden>
             Senha dos noivos
             <input name="password" type="password" maxlength="64" autocomplete="current-password" data-search-password />
           </label>
-          <button class="button primary" type="submit" data-search-submit disabled>Entrar no álbum</button>
+          <button class="button primary" type="submit" data-search-submit hidden>Entrar</button>
           <button class="album-login-switch" type="button" data-go-new>Não achei meu nome</button>
         </form>
 
@@ -74,6 +81,6 @@
       </section>
     </main>
 
-    <script src="/album-login.js?v=4"></script>
+    <script src="/album-login.js?v=5"></script>
   </body>
 </html>

@@ -21,6 +21,7 @@ export function createFakeSupabase({ tables = {}, passwords = {} } = {}) {
     album_media: [],
     restricted_guests: [],
     rsvp_remember_tokens: [],
+    album_challenge_assignments: [],
     ...structuredClone(tables),
   };
   let clock = Date.parse("2026-11-28T18:00:00Z");
@@ -55,6 +56,15 @@ export function createFakeSupabase({ tables = {}, passwords = {} } = {}) {
       row.active ??= true;
       row.points ??= 1;
       row.sort_order ??= 0;
+      row.scope ??= "draw";
+      row.difficulty ??= "easy";
+      row.couple ??= false;
+      row.wedding ??= false;
+      row.max_assignees ??= null;
+    }
+    if (table === "album_challenge_assignments") {
+      row.active ??= true;
+      row.swapped ??= false;
     }
     if (table === "album_media") row.challenge_id ??= null;
     for (const column of uniqueColumns[table] || []) {
@@ -78,6 +88,61 @@ export function createFakeSupabase({ tables = {}, passwords = {} } = {}) {
     return [200, [{ rsvp_id: row.id, guest_name: row.guest_name }]];
   }
 
+  // Mesma regra de supabase-album-challenge-draw.sql: 1 desafio ativo por dificuldade,
+  // o menos sorteado primeiro, no máximo 1 com os noivos, respeitando max_assignees
+  // e garantindo pelo menos 1 de registrar o casamento numa das dificuldades que faltam.
+  function assignChallenges({ p_guest_key: guestKey, p_guest_name: guestName }) {
+    const challengeById = new Map(state.album_challenges.map((challenge) => [challenge.id, challenge]));
+    const activeRows = () => state.album_challenge_assignments.filter((row) => row.active);
+    const mine = () => activeRows().filter((row) => row.guest_key === guestKey);
+    const missingLevels = ["easy", "medium", "hard"].filter((level) => !mine().some((row) => {
+      const challenge = challengeById.get(row.challenge_id);
+      return challenge?.active && challenge.scope === "draw" && challenge.difficulty === level;
+    })).sort(() => Math.random() - 0.5);
+    for (const level of missingLevels) {
+      const hasCouple = mine().some((row) => challengeById.get(row.challenge_id)?.couple);
+      const hasWedding = mine().some((row) => challengeById.get(row.challenge_id)?.wedding);
+      const used = (id) => activeRows().filter((row) => row.challenge_id === id).length;
+      const pick = (onlyWedding) => state.album_challenges
+        .filter((challenge) => challenge.active && challenge.scope === "draw" && challenge.difficulty === level)
+        .filter((challenge) => !onlyWedding || challenge.wedding)
+        .filter((challenge) => !state.album_challenge_assignments
+          .some((row) => row.guest_key === guestKey && row.challenge_id === challenge.id))
+        .filter((challenge) => !challenge.couple
+          || (!hasCouple && (challenge.max_assignees == null || used(challenge.id) < challenge.max_assignees)))
+        .sort((a, b) => used(a.id) - used(b.id))[0];
+      const picked = (!hasWedding && pick(true)) || pick(false);
+      if (picked) {
+        prepareAndPush("album_challenge_assignments", { guest_key: guestKey, guest_name: guestName, challenge_id: picked.id });
+      }
+    }
+    return [200, mine()];
+  }
+
+  function swapChallenge(body) {
+    const { p_guest_key: guestKey, p_challenge_id: challengeId, p_max_swaps: maxSwaps = 1 } = body;
+    const swaps = state.album_challenge_assignments.filter((row) => row.guest_key === guestKey && row.swapped).length;
+    if (swaps >= maxSwaps) return [400, { message: "Você já usou sua troca de desafio." }];
+    const row = state.album_challenge_assignments
+      .find((candidate) => candidate.guest_key === guestKey && candidate.challenge_id === challengeId && candidate.active);
+    if (!row) return [400, { message: "Este desafio não está entre os seus." }];
+    row.active = false;
+    row.swapped = true;
+    return assignChallenges(body);
+  }
+
+  function prepareAndPush(table, payload) {
+    const { row } = prepareRow(table, payload);
+    state[table].push(row);
+    return row;
+  }
+
+  const rpcHandlers = {
+    authenticate_album_guest: authenticate,
+    assign_album_challenges: assignChallenges,
+    swap_album_challenge: swapChallenge,
+  };
+
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     const chunks = [];
@@ -86,8 +151,9 @@ export function createFakeSupabase({ tables = {}, passwords = {} } = {}) {
 
     const rpcMatch = url.pathname.match(/^\/rest\/v1\/rpc\/([a-z_]+)$/);
     if (rpcMatch) {
-      if (rpcMatch[1] !== "authenticate_album_guest") return send(response, 404, { message: "RPC não simulada." });
-      const [status, payload] = authenticate(body || {});
+      const handler = rpcHandlers[rpcMatch[1]];
+      if (!handler) return send(response, 404, { message: "RPC não simulada." });
+      const [status, payload] = handler(body || {});
       return send(response, status, payload);
     }
 
@@ -126,6 +192,8 @@ export function createFakeSupabase({ tables = {}, passwords = {} } = {}) {
         state.album_media.forEach((media) => {
           if (ids.has(media.challenge_id)) media.challenge_id = null;
         });
+        state.album_challenge_assignments = state.album_challenge_assignments
+          .filter((row) => !ids.has(row.challenge_id));
       }
       return send(response, 200, deleted);
     }
