@@ -9,7 +9,7 @@ create table if not exists public.payment_orders (
     lower(regexp_replace(trim(guest_name), '\s+', ' ', 'g'))
   ) stored,
   gift_name text not null,
-  gift_type text not null check (gift_type in ('fixed', 'quota')),
+  gift_type text not null check (gift_type in ('fixed', 'quota', 'open')),
   amount integer not null check (amount > 0),
   status text not null default 'pending',
   gateway text not null default 'mercado_pago',
@@ -153,6 +153,12 @@ as $$
         where gr.gift_id = g.id
           and gr.gift_type = 'quota'
       ), 0)::integer
+      when g.gift_type = 'open' then coalesce((
+        select sum(gr.amount)
+        from public.gift_reservations gr
+        where gr.gift_id = g.id
+          and gr.gift_type = 'open'
+      ), 0)::integer
       else 0
     end as contributed_amount,
     case
@@ -177,6 +183,7 @@ as $$
         where gr.gift_id = g.id
           and gr.gift_type = 'quota'
       ), 0) >= g.goal then 'reserved'
+      when g.gift_type = 'open' then 'available'
       else g.status
     end as status,
     g.sort_order
@@ -211,6 +218,7 @@ declare
   clean_name text := regexp_replace(trim(coalesce(p_buyer_name, '')), '\s+', ' ', 'g');
   clean_email text := lower(trim(coalesce(p_buyer_email, '')));
   selected_gift public.gifts%rowtype;
+  inserted_order public.payment_orders%rowtype;
   final_amount integer;
   committed_amount integer;
 begin
@@ -223,7 +231,7 @@ begin
     raise exception 'E-mail inválido';
   end if;
 
-  if char_length(coalesce(p_message, '')) > 500 then
+  if char_length(coalesce(p_message, '')) > 5000 then
     raise exception 'Mensagem muito longa';
   end if;
 
@@ -238,11 +246,11 @@ begin
     raise exception 'Presente não encontrado';
   end if;
 
-  update public.payment_orders
+  update public.payment_orders po
   set status = 'cancelled'
-  where gift_id = selected_gift.id
-    and status = 'pending'
-    and expires_at <= now();
+  where po.gift_id = selected_gift.id
+    and po.status = 'pending'
+    and po.expires_at <= now();
 
   if selected_gift.gift_type = 'fixed' then
     if exists (
@@ -261,6 +269,12 @@ begin
     end if;
 
     final_amount := selected_gift.value;
+  elsif selected_gift.gift_type = 'open' then
+    final_amount := p_amount;
+
+    if final_amount is null or final_amount < 1 or final_amount > 1000000 then
+      raise exception 'Valor inválido';
+    end if;
   else
     final_amount := p_amount;
 
@@ -311,17 +325,17 @@ begin
     final_amount,
     'mercado_pago'
   )
-  returning
-    payment_orders.id,
-    payment_orders.gift_id,
-    payment_orders.guest_name,
-    payment_orders.buyer_email,
-    payment_orders.gift_name,
-    payment_orders.gift_type,
-    payment_orders.amount,
-    payment_orders.status,
-    payment_orders.expires_at
-  into id, gift_id, buyer_name, buyer_email, gift_name, gift_type, amount, status, expires_at;
+  returning * into inserted_order;
+
+  id := inserted_order.id;
+  gift_id := inserted_order.gift_id;
+  buyer_name := inserted_order.guest_name;
+  buyer_email := inserted_order.buyer_email;
+  gift_name := inserted_order.gift_name;
+  gift_type := inserted_order.gift_type;
+  amount := inserted_order.amount;
+  status := inserted_order.status;
+  expires_at := inserted_order.expires_at;
 
   return next;
 exception
@@ -353,6 +367,7 @@ as $$
 declare
   clean_name text := regexp_replace(trim(coalesce(p_guest_name, '')), '\s+', ' ', 'g');
   selected_gift public.gifts%rowtype;
+  inserted_reservation public.gift_reservations%rowtype;
   final_amount integer;
   committed_amount integer;
 begin
@@ -371,11 +386,11 @@ begin
     raise exception 'Presente não encontrado';
   end if;
 
-  update public.payment_orders
+  update public.payment_orders po
   set status = 'cancelled'
-  where gift_id = selected_gift.id
-    and status = 'pending'
-    and expires_at <= now();
+  where po.gift_id = selected_gift.id
+    and po.status = 'pending'
+    and po.expires_at <= now();
 
   if selected_gift.gift_type = 'fixed' then
     if exists (
@@ -389,6 +404,12 @@ begin
     end if;
 
     final_amount := selected_gift.value;
+  elsif selected_gift.gift_type = 'open' then
+    final_amount := p_amount;
+
+    if final_amount is null or final_amount < 1 or final_amount > 1000000 then
+      raise exception 'Valor inválido';
+    end if;
   else
     final_amount := p_amount;
 
@@ -421,15 +442,15 @@ begin
 
   insert into public.gift_reservations (gift_id, guest_name, gift_name, gift_type, amount)
   values (selected_gift.id, clean_name, selected_gift.name, selected_gift.gift_type, final_amount)
-  returning
-    gift_reservations.id,
-    gift_reservations.gift_id,
-    gift_reservations.guest_name,
-    gift_reservations.gift_name,
-    gift_reservations.gift_type,
-    gift_reservations.amount,
-    gift_reservations.created_at
-  into id, gift_id, guest_name, gift_name, gift_type, amount, created_at;
+  returning * into inserted_reservation;
+
+  id := inserted_reservation.id;
+  gift_id := inserted_reservation.gift_id;
+  guest_name := inserted_reservation.guest_name;
+  gift_name := inserted_reservation.gift_name;
+  gift_type := inserted_reservation.gift_type;
+  amount := inserted_reservation.amount;
+  created_at := inserted_reservation.created_at;
 
   return next;
 exception

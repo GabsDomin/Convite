@@ -55,6 +55,7 @@ declare
   end;
   legacy_children_confirmation boolean := p_party_size = 'Eu e meus filhos';
   existing_rsvp_id uuid;
+  blocked_guest_name text;
 begin
   select coalesce(array_agg(candidate.clean_name order by candidate.position), '{}'::text[])
   into clean_additional_names
@@ -129,36 +130,33 @@ begin
     select 1
     from public.restricted_guests rg
     where rg.active
-      and (
-        rg.normalized_guest_name = normalized_name
-        or rg.normalized_guest_name in (
-          select public.normalize_guest_name(additional_name)
-          from unnest(clean_additional_names) additional_name
-        )
-      )
+      and rg.normalized_guest_name = normalized_name
   ) then
-    raise exception 'Infelizmente, seu nome não está na lista de convidados.';
+    raise exception 'Infelizmente, % não está na lista de convidados.', clean_name;
+  end if;
+
+  select candidate.guest_label
+  into blocked_guest_name
+  from (
+    select additional_name as guest_label
+    from unnest(clean_additional_names) as additional_name
+  ) candidate
+  where exists (
+    select 1
+    from public.restricted_guests rg
+    where rg.active
+      and rg.normalized_guest_name = public.normalize_guest_name(candidate.guest_label)
+  )
+  limit 1;
+
+  if blocked_guest_name is not null then
+    raise exception 'Infelizmente, % não está na lista de convidados.', blocked_guest_name;
   end if;
 
   select r.id
   into existing_rsvp_id
   from public.rsvps r
   where r.normalized_guest_name = normalized_name;
-
-  if existing_rsvp_id is not null then
-    return query
-    select
-      r.id,
-      r.guest_name,
-      r.party_size,
-      r.additional_guest_names,
-      r.created_at,
-      r.updated_at,
-      true as already_confirmed
-    from public.rsvps r
-    where r.id = existing_rsvp_id;
-    return;
-  end if;
 
   if exists (
     select 1
@@ -181,6 +179,46 @@ begin
       )
   ) then
     raise exception 'Uma das pessoas informadas já possui confirmação';
+  end if;
+
+  if existing_rsvp_id is not null then
+    if exists (
+      select 1
+      from public.rsvps r
+      where r.id = existing_rsvp_id
+        and r.party_size = selected_party_size
+        and r.additional_guest_names = clean_additional_names
+    ) then
+      return query
+      select
+        r.id,
+        r.guest_name,
+        r.party_size,
+        r.additional_guest_names,
+        r.created_at,
+        r.updated_at,
+        true as already_confirmed
+      from public.rsvps r
+      where r.id = existing_rsvp_id;
+      return;
+    end if;
+
+    return query
+    update public.rsvps r
+    set
+      guest_name = clean_name,
+      party_size = selected_party_size,
+      additional_guest_names = clean_additional_names
+    where r.id = existing_rsvp_id
+    returning
+      r.id,
+      r.guest_name,
+      r.party_size,
+      r.additional_guest_names,
+      r.created_at,
+      r.updated_at,
+      false as already_confirmed;
+    return;
   end if;
 
   return query

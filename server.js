@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,8 +11,12 @@ const root = resolve(__dirname);
 const assetsRoot = resolve(root, "assets");
 const port = Number(process.env.PORT || 3000);
 const maxJsonBodyBytes = 64 * 1024;
+const maxGiftMessageLength = 5000;
 const maxAlbumFileBytes = 500 * 1024 * 1024;
 const rateLimitStore = new Map();
+const supportOverviewCacheTtlMs = 45_000;
+let supportOverviewCache = { expiresAt: 0, payload: null };
+let supportOverviewBuildPromise = null;
 
 class HttpError extends Error {
   constructor(statusCode, message, headers = {}) {
@@ -59,7 +63,8 @@ const hasR2Config = Boolean(
 );
 const hasAlbumConfig = hasSupabaseConfig && hasR2Config;
 const mercadoPagoMode = mercadoPagoAccessToken.startsWith("TEST-") ? "sandbox" : "production";
-const guestNotInvitedMessage = "Infelizmente, seu nome não está na lista de convidados.";
+const guestNotInvitedMessagePattern = /^Infelizmente, .+ não está na lista de convidados\.$/;
+const siteEngagementEventTypes = new Set(["gifts_area_view", "gifts_list_opened", "gift_modal_opened"]);
 const albumCategories = new Set(["Preparativos", "Cerimônia", "Jantar", "Festa"]);
 const albumImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif", "image/heic", "image/heif"]);
 const albumVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
@@ -67,13 +72,20 @@ const albumR2KeyPrefix = "gab-naia/album/originals/";
 const albumUploadUrlTtlSeconds = 30 * 60;
 const albumSessionCookieName = "gab_naia_album_session";
 const albumSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
-const albumMediaSelect = "id,guest_name,category,storage_provider,storage_key,public_id,resource_type,mime_type,format,version,bytes,width,height,duration,backup_status,created_at";
+const albumMediaSelect = "id,guest_name,category,storage_provider,storage_key,public_id,resource_type,mime_type,format,version,bytes,width,height,duration,backup_status,content_hash,created_at";
 const albumAdminGuestNames = new Set(
-  (firstEnv("ALBUM_ADMIN_GUEST_NAMES") || "Gabriel Domingues")
+  (firstEnv("ALBUM_ADMIN_GUEST_NAMES") || "Gabriel Domingues Fernandes,Gabriel Domingues")
     .split(",")
     .map((name) => name.trim().replace(/\s+/g, " ").toLowerCase())
     .filter(Boolean),
 );
+const albumPublicOpenAtRaw = firstEnv("ALBUM_PUBLIC_OPEN_AT") || "2026-11-28T15:00:00-03:00";
+const albumPublicOpenAtMs = Date.parse(albumPublicOpenAtRaw);
+const hasSupportPanelConfig = hasSupabaseConfig && albumUploadSigningSecret.length >= 32;
+const supportSessionCookieName = "gab_naia_support_session";
+const supportSessionTtlMs = 12 * 60 * 60 * 1000;
+const guestRememberCookieName = "gab_naia_guest_remember";
+const guestRememberTtlMs = 400 * 24 * 60 * 60 * 1000;
 const albumFileExtensions = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -122,6 +134,11 @@ const albumStylesDocument = { content: readFileSync(new URL("./album.css", impor
 const albumScriptDocument = { content: readFileSync(new URL("./album.js", import.meta.url)), extension: ".js" };
 const albumLoginDocument = { content: readFileSync(new URL("./album-login.html", import.meta.url)), extension: ".html" };
 const albumLoginScriptDocument = { content: readFileSync(new URL("./album-login.js", import.meta.url)), extension: ".js" };
+const supportDocument = { content: readFileSync(new URL("./support.html", import.meta.url)), extension: ".html" };
+const supportStylesDocument = { content: readFileSync(new URL("./support.css", import.meta.url)), extension: ".css" };
+const supportScriptDocument = { content: readFileSync(new URL("./support.js", import.meta.url)), extension: ".js" };
+const supportLoginDocument = { content: readFileSync(new URL("./support-login.html", import.meta.url)), extension: ".html" };
+const supportLoginScriptDocument = { content: readFileSync(new URL("./support-login.js", import.meta.url)), extension: ".js" };
 const paymentSuccessDocument = {
   content: readFileSync(new URL("./pagamento/sucesso/index.html", import.meta.url)),
   extension: ".html",
@@ -148,6 +165,13 @@ const publicFiles = new Map([
   ["/album/login/", albumLoginDocument],
   ["/album-login.html", albumLoginDocument],
   ["/album-login.js", albumLoginScriptDocument],
+  ["/support.css", supportStylesDocument],
+  ["/support.js", supportScriptDocument],
+  ["/support-login.js", supportLoginScriptDocument],
+  ["/apoio", supportDocument],
+  ["/apoio/", supportDocument],
+  ["/apoio/login", supportLoginDocument],
+  ["/apoio/login/", supportLoginDocument],
   ["/pagamento/sucesso", paymentSuccessDocument],
   ["/pagamento/sucesso/", paymentSuccessDocument],
   ["/pagamento/erro", paymentErrorDocument],
@@ -325,6 +349,69 @@ function normalizeGuestName(value) {
     .replace(/\s+/g, " ");
 }
 
+async function readRsvpGroupRecord(guestName) {
+  const normalized = normalizeGuestName(guestName);
+  let rows = await readSupabaseTable(
+    `rsvps?select=id,guest_name,party_size,primary_rsvp_id,additional_guest_names&normalized_guest_name=eq.${encodeURIComponent(normalized)}&limit=1`,
+  );
+  let row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row?.guest_name) return null;
+
+  const primaryId = row.primary_rsvp_id || row.id;
+  const matchedCompanion = Boolean(row.primary_rsvp_id);
+  if (row.primary_rsvp_id) {
+    rows = await readSupabaseTable(
+      `rsvps?select=id,guest_name,party_size,primary_rsvp_id,additional_guest_names&id=eq.${encodeURIComponent(primaryId)}&limit=1`,
+    );
+    row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row?.guest_name) return null;
+  }
+
+  const companions = await readSupabaseTable(
+    `rsvps?select=guest_name&primary_rsvp_id=eq.${encodeURIComponent(primaryId)}&order=created_at.asc,guest_name.asc`,
+  );
+  const additionalGuestNames = (Array.isArray(companions) ? companions : [])
+    .map((companion) => companion.guest_name)
+    .filter(Boolean);
+
+  return {
+    primaryId,
+    matchedCompanion,
+    guest_name: row.guest_name,
+    party_size: row.party_size,
+    additional_guest_names: additionalGuestNames,
+  };
+}
+
+async function readRsvpGroupByGuestName(guestName) {
+  const record = await readRsvpGroupRecord(guestName);
+  if (!record) return null;
+  return {
+    guest_name: record.guest_name,
+    party_size: record.party_size,
+    additional_guest_names: record.additional_guest_names,
+  };
+}
+
+// Sem o cookie do aparelho que confirmou, só é possível incluir pessoas, nunca remover.
+async function assertRsvpChangeAllowed(request, guestName, additionalGuestNames) {
+  const existing = await readRsvpGroupRecord(guestName);
+  if (!existing || existing.matchedCompanion) return;
+
+  const requestedNames = new Set(additionalGuestNames.map(normalizeGuestName));
+  const removesSomeone = existing.additional_guest_names
+    .some((name) => !requestedNames.has(normalizeGuestName(name)));
+  if (!removesSomeone) return;
+
+  const rememberedPrimaryId = await readRememberedPrimaryRsvpId(request);
+  if (rememberedPrimaryId !== existing.primaryId) {
+    throw new HttpError(
+      403,
+      "Para remover pessoas desta confirmação, use o aparelho em que ela foi feita ou fale com os noivos.",
+    );
+  }
+}
+
 function validateAdditionalGuestNames(value, partySize, primaryGuestName) {
   if (!Array.isArray(value)) {
     throw new HttpError(400, "Lista de pessoas inválida.");
@@ -349,6 +436,9 @@ function validateAdditionalGuestNames(value, partySize, primaryGuestName) {
   }
   if (partySize === "Casal" && (names.length < 1 || names.length > 7)) {
     throw new HttpError(400, "Informe o nome do seu companheiro ou companheira.");
+  }
+  if (partySize === "Família" && (names.length < 2 || names.length > 7)) {
+    throw new HttpError(400, "Informe o parceiro ou parceira e pelo menos um filho.");
   }
   if (partySize === "Responsável e menores" && (names.length < 1 || names.length > 6)) {
     throw new HttpError(400, "Informe o nome de cada filho.");
@@ -394,6 +484,23 @@ function requireAlbumCategory(value) {
     throw new HttpError(400, "Momento do álbum inválido.");
   }
   return category;
+}
+
+function requireContentHash(value) {
+  const hash = String(value || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(hash)) {
+    throw new HttpError(400, "Identificador do arquivo inválido.");
+  }
+  return hash;
+}
+
+async function assertAlbumMediaHashAvailable(contentHash) {
+  const rows = await readSupabaseTable(
+    `album_media?select=id&content_hash=eq.${encodeURIComponent(contentHash)}&limit=1`,
+  );
+  if (Array.isArray(rows) && rows[0]?.id) {
+    throw new HttpError(409, "Esta memória já está no álbum.");
+  }
 }
 
 function requireAlbumAccessCode(value) {
@@ -477,10 +584,88 @@ function isAlbumAdmin(guestName) {
   return albumAdminGuestNames.has(normalizeAlbumGuestName(guestName));
 }
 
+function canAccessSupportPanel(guestName) {
+  return isAlbumAdmin(guestName);
+}
+
+function isAlbumPubliclyOpen(now = Date.now()) {
+  return Number.isFinite(albumPublicOpenAtMs) && now >= albumPublicOpenAtMs;
+}
+
+function canAccessAlbum(guestName) {
+  return isAlbumPubliclyOpen() || isAlbumAdmin(guestName);
+}
+
+function requireAlbumAccess(session) {
+  if (!canAccessAlbum(session.guestName)) {
+    throw new HttpError(403, "O álbum coletivo abre no dia 28/11, às 15h.");
+  }
+}
+
 function requireAlbumAdmin(session) {
   if (!isAlbumAdmin(session.guestName)) {
     throw new HttpError(403, "Somente o administrador do álbum pode excluir memórias.");
   }
+}
+
+function createSupportSessionToken(guestName) {
+  if (!hasSupportPanelConfig) {
+    throw new HttpError(503, "Painel de apoio indisponível.");
+  }
+  const cleanGuestName = requireText(guestName, "Nome", { min: 2, max: 120 });
+  if (!canAccessSupportPanel(cleanGuestName)) {
+    throw new HttpError(403, "Somente o administrador pode acessar o painel de apoio.");
+  }
+  const payload = {
+    role: "support",
+    guestName: cleanGuestName,
+    expiresAt: Date.now() + supportSessionTtlMs,
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", albumUploadSigningSecret).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+function readSupportSession(request) {
+  if (!hasSupportPanelConfig) return null;
+  const token = parseCookies(request)[supportSessionCookieName];
+  if (!token) return null;
+  const [encodedPayload, signature] = String(token).split(".");
+  if (!encodedPayload || !signature) return null;
+
+  const expectedSignature = createHmac("sha256", albumUploadSigningSecret).update(encodedPayload).digest("base64url");
+  const receivedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (receivedBuffer.length !== expectedBuffer.length || !timingSafeEqual(receivedBuffer, expectedBuffer)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    if (payload.role !== "support") return null;
+    if (!Number.isSafeInteger(payload.expiresAt) || payload.expiresAt < Date.now()) return null;
+    const guestName = requireText(payload.guestName, "Nome", { min: 2, max: 120 });
+    if (!canAccessSupportPanel(guestName)) return null;
+    return { guestName, expiresAt: payload.expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+function requireSupportSession(request) {
+  const session = readSupportSession(request);
+  if (!session) {
+    throw new HttpError(401, "Entre no painel de apoio para continuar.");
+  }
+  return session;
+}
+
+function supportSessionCookieHeader(token, { clear = false } = {}) {
+  if (clear) {
+    return `${supportSessionCookieName}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
+  }
+  const secureFlag = backendUrl.startsWith("https://") || siteUrl.startsWith("https://") ? "; Secure" : "";
+  return `${supportSessionCookieName}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.floor(supportSessionTtlMs / 1000)}; HttpOnly; SameSite=Lax${secureFlag}`;
 }
 
 function requireAlbumMediaId(value) {
@@ -497,6 +682,140 @@ function albumSessionCookieHeader(token, { clear = false } = {}) {
   }
   const secureFlag = siteUrl.startsWith("https://") || process.env.VERCEL ? "; Secure" : "";
   return `${albumSessionCookieName}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.floor(albumSessionTtlMs / 1000)}; HttpOnly; SameSite=Lax${secureFlag}`;
+}
+
+function hashRememberDeviceToken(token) {
+  return createHash("sha256").update(String(token)).digest("hex");
+}
+
+function hashClientIp(ip) {
+  const clean = String(ip || "").trim();
+  if (!clean) return null;
+  return createHash("sha256").update(`${clean}|${albumUploadSigningSecret.slice(0, 16)}`).digest("hex");
+}
+
+function createGuestRememberCookieValue(rawToken, expiresAt) {
+  if (albumUploadSigningSecret.length < 32) {
+    throw new HttpError(503, "Lembrete de convidado indisponível.");
+  }
+  const payload = {
+    token: String(rawToken),
+    expiresAt,
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", albumUploadSigningSecret).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+function readGuestRememberRawToken(request) {
+  if (albumUploadSigningSecret.length < 32) return null;
+  const token = parseCookies(request)[guestRememberCookieName];
+  if (!token) return null;
+  const [encodedPayload, signature] = String(token).split(".");
+  if (!encodedPayload || !signature) return null;
+
+  const expectedSignature = createHmac("sha256", albumUploadSigningSecret).update(encodedPayload).digest("base64url");
+  const receivedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (receivedBuffer.length !== expectedBuffer.length || !timingSafeEqual(receivedBuffer, expectedBuffer)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    if (!payload?.token || !Number.isSafeInteger(payload.expiresAt) || payload.expiresAt < Date.now()) {
+      return null;
+    }
+    return String(payload.token);
+  } catch {
+    return null;
+  }
+}
+
+function guestRememberCookieHeader(signedValue, { clear = false } = {}) {
+  if (clear) {
+    return `${guestRememberCookieName}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
+  }
+  const secureFlag = siteUrl.startsWith("https://") || process.env.VERCEL ? "; Secure" : "";
+  return `${guestRememberCookieName}=${encodeURIComponent(signedValue)}; Path=/; Max-Age=${Math.floor(guestRememberTtlMs / 1000)}; HttpOnly; SameSite=Lax${secureFlag}`;
+}
+
+async function issueGuestRememberToken(primaryRsvpId, request) {
+  const rawToken = randomUUID();
+  const tokenHash = hashRememberDeviceToken(rawToken);
+  const ipHash = hashClientIp(getClientIp(request));
+
+  try {
+    await insertSupabaseTable("rsvp_remember_tokens", {
+      primary_rsvp_id: primaryRsvpId,
+      token_hash: tokenHash,
+      last_ip_hash: ipHash,
+    });
+  } catch (error) {
+    console.error("issueGuestRememberToken:", error?.message || error);
+    return null;
+  }
+
+  return createGuestRememberCookieValue(rawToken, Date.now() + guestRememberTtlMs);
+}
+
+async function readRememberedPrimaryRsvpId(request) {
+  const rawToken = readGuestRememberRawToken(request);
+  if (!rawToken) return null;
+
+  try {
+    const tokenRows = await readSupabaseTable(
+      `rsvp_remember_tokens?select=primary_rsvp_id&token_hash=eq.${encodeURIComponent(hashRememberDeviceToken(rawToken))}&limit=1`,
+    );
+    const row = Array.isArray(tokenRows) ? tokenRows[0] : tokenRows;
+    return row?.primary_rsvp_id || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveGuestRememberSession(request) {
+  const rawToken = readGuestRememberRawToken(request);
+  if (!rawToken) return null;
+
+  const tokenHash = hashRememberDeviceToken(rawToken);
+  let row;
+  try {
+    const tokenRows = await readSupabaseTable(
+      `rsvp_remember_tokens?select=primary_rsvp_id&token_hash=eq.${encodeURIComponent(tokenHash)}&limit=1`,
+    );
+    row = Array.isArray(tokenRows) ? tokenRows[0] : tokenRows;
+  } catch {
+    return null;
+  }
+
+  if (!row?.primary_rsvp_id) return null;
+
+  const ipHash = hashClientIp(getClientIp(request));
+  try {
+    await fetch(new URL(`/rest/v1/rsvp_remember_tokens?token_hash=eq.${encodeURIComponent(tokenHash)}`, supabaseUrl), {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+        ...getSupabaseHeaders(),
+      },
+      body: JSON.stringify({
+        last_seen_at: new Date().toISOString(),
+        ...(ipHash ? { last_ip_hash: ipHash } : {}),
+      }),
+    });
+  } catch {
+    /* best effort */
+  }
+
+  const primaryRows = await readSupabaseTable(
+    `rsvps?select=id,guest_name,party_size&id=eq.${encodeURIComponent(row.primary_rsvp_id)}&limit=1`,
+  );
+  const primary = Array.isArray(primaryRows) ? primaryRows[0] : primaryRows;
+  if (!primary?.guest_name) return null;
+
+  return readRsvpGroupByGuestName(primary.guest_name);
 }
 
 function requireAlbumFile(value) {
@@ -568,6 +887,7 @@ function requireAlbumUploadToken(value) {
     guestName: requireText(payload.guestName, "Nome", { min: 2, max: 80 }),
     category: requireAlbumCategory(payload.category),
     storageKey: String(payload.storageKey),
+    contentHash: requireContentHash(payload.contentHash),
   };
 }
 
@@ -664,6 +984,7 @@ function normalizeAlbumMedia(media) {
         ? null
         : buildR2ImageUrl(originalUrl, "width=900,height=1200,fit=cover,quality=82,format=auto"),
       backupStatus: media.backup_status || "pending",
+      contentHash: media.content_hash || null,
       createdAt: media.created_at,
     };
   }
@@ -691,6 +1012,7 @@ function normalizeAlbumMedia(media) {
       isVideo ? "jpg" : media.format,
     ),
     createdAt: media.created_at,
+    contentHash: media.content_hash || null,
   };
 }
 
@@ -743,6 +1065,749 @@ async function readSupabaseTable(path) {
   }
 
   return data;
+}
+
+async function countSupabaseRows(pathQuery) {
+  const endpoint = new URL(`/rest/v1/${pathQuery}`, supabaseUrl);
+  const supabaseResponse = await fetch(endpoint, {
+    headers: {
+      ...getSupabaseHeaders(),
+      Prefer: "count=exact",
+    },
+  });
+  const responseText = await supabaseResponse.text();
+
+  if (!supabaseResponse.ok) {
+    let data = null;
+    try {
+      data = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      data = null;
+    }
+    const message = data?.message || data?.error_description || data?.hint || "Erro ao ler o Supabase.";
+    throw new Error(message);
+  }
+
+  const contentRange = supabaseResponse.headers.get("content-range") || "";
+  const total = Number(contentRange.split("/")[1]);
+  return Number.isFinite(total) ? total : 0;
+}
+
+function incrementCount(map, key) {
+  const label = String(key || "—");
+  map[label] = (map[label] || 0) + 1;
+}
+
+function householdPeopleCount(household) {
+  return Array.isArray(household.members) ? household.members.length : 0;
+}
+
+async function loadGiftsEngagementStats(confirmedGuestNames = new Set()) {
+  const empty = {
+    configured: false,
+    areaViews: 0,
+    listOpened: 0,
+    modalOpens: 0,
+    uniqueSessions: 0,
+    identifiedGuests: 0,
+    sessionsWithName: 0,
+    confirmedVisitors: 0,
+    funnel: { sawSection: 0, openedList: 0, openedGiftModal: 0 },
+    recentVisitors: [],
+    visitorSessions: [],
+  };
+
+  try {
+    const events = await readSupabaseTable(
+      "site_engagement_events?select=event_type,guest_name,session_key,gift_id,created_at&order=created_at.desc&limit=400",
+    );
+    const rows = Array.isArray(events) ? events : [];
+    let areaViews = 0;
+    let listOpened = 0;
+    let modalOpens = 0;
+    for (const row of rows) {
+      if (row.event_type === "gifts_area_view") areaViews += 1;
+      else if (row.event_type === "gifts_list_opened") listOpened += 1;
+      else if (row.event_type === "gift_modal_opened") modalOpens += 1;
+    }
+    const sessions = new Map();
+
+    for (const row of rows) {
+      const key = row.session_key;
+      if (!key) continue;
+      let session = sessions.get(key);
+      if (!session) {
+        session = {
+          sessionKey: key,
+          guestName: row.guest_name || null,
+          areaViewAt: null,
+          listOpenedAt: null,
+          modalOpens: 0,
+          lastGiftId: null,
+          firstSeenAt: row.created_at,
+          lastSeenAt: row.created_at,
+        };
+        sessions.set(key, session);
+      }
+      if (row.guest_name && !session.guestName) session.guestName = row.guest_name;
+      if (Date.parse(row.created_at || "") < Date.parse(session.firstSeenAt || "")) {
+        session.firstSeenAt = row.created_at;
+      }
+      if (row.event_type === "gifts_area_view" && !session.areaViewAt) session.areaViewAt = row.created_at;
+      if (row.event_type === "gifts_list_opened" && !session.listOpenedAt) session.listOpenedAt = row.created_at;
+      if (row.event_type === "gift_modal_opened") {
+        session.modalOpens += 1;
+        session.lastGiftId = row.gift_id || session.lastGiftId;
+      }
+      if (Date.parse(row.created_at || "") > Date.parse(session.lastSeenAt || "")) {
+        session.lastSeenAt = row.created_at;
+      }
+    }
+
+    const sessionList = [...sessions.values()];
+    const sessionsByGuest = new Map();
+    for (const session of sessionList) {
+      if (!session.guestName) continue;
+      const normalized = normalizeGuestName(session.guestName);
+      const bucket = sessionsByGuest.get(normalized) || [];
+      bucket.push(session);
+      sessionsByGuest.set(normalized, bucket);
+    }
+    for (const [, guestSessions] of sessionsByGuest) {
+      guestSessions.sort(
+        (left, right) => Date.parse(left.firstSeenAt || "") - Date.parse(right.firstSeenAt || ""),
+      );
+      guestSessions.forEach((session, index) => {
+        session.visitNumber = index + 1;
+        session.isReturnVisit = index > 0;
+      });
+    }
+    for (const session of sessionList) {
+      session.confirmedInRsvp = session.guestName
+        ? confirmedGuestNames.has(normalizeGuestName(session.guestName))
+        : false;
+      if (!session.visitNumber) {
+        session.visitNumber = 1;
+        session.isReturnVisit = false;
+      }
+    }
+
+    const guests = new Set();
+    let sessionsWithName = 0;
+    let confirmedVisitors = 0;
+
+    for (const session of sessionList) {
+      if (session.guestName) {
+        sessionsWithName += 1;
+        guests.add(normalizeGuestName(session.guestName));
+        if (confirmedGuestNames.has(normalizeGuestName(session.guestName))) {
+          confirmedVisitors += 1;
+        }
+      }
+    }
+
+    const funnel = {
+      sawSection: sessionList.filter((s) => s.areaViewAt).length,
+      openedList: sessionList.filter((s) => s.listOpenedAt).length,
+      openedGiftModal: sessionList.filter((s) => s.modalOpens > 0).length,
+    };
+
+    const recentVisitors = sessionList
+      .sort((left, right) => Date.parse(right.lastSeenAt || "") - Date.parse(left.lastSeenAt || ""))
+      .slice(0, 25);
+
+    const visitorSessions = sessionList
+      .sort((left, right) => Date.parse(right.lastSeenAt || "") - Date.parse(left.lastSeenAt || ""))
+      .slice(0, 100);
+
+    return {
+      configured: true,
+      areaViews,
+      listOpened,
+      modalOpens,
+      uniqueSessions: sessionList.length,
+      identifiedGuests: guests.size,
+      sessionsWithName,
+      confirmedVisitors,
+      funnel,
+      recentVisitors,
+      visitorSessions,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+async function loadGuestRememberStats(primaryNameById = new Map()) {
+  const empty = {
+    configured: false,
+    summary: { devices: 0, returningDevices: 0, guestsWithDevice: 0 },
+    devices: [],
+  };
+
+  try {
+    const rows = await readSupabaseTable(
+      "rsvp_remember_tokens?select=primary_rsvp_id,created_at,last_seen_at&order=last_seen_at.desc&limit=500",
+    );
+    const list = Array.isArray(rows) ? rows : [];
+    const devices = list
+      .map((row) => {
+        const guestName = primaryNameById.get(row.primary_rsvp_id);
+        if (!guestName) return null;
+        const createdMs = Date.parse(row.created_at || "");
+        const lastMs = Date.parse(row.last_seen_at || "");
+        const returned = Number.isFinite(createdMs) && Number.isFinite(lastMs) && lastMs - createdMs > 5 * 60 * 1000;
+        return {
+          guestName,
+          createdAt: row.created_at,
+          lastSeenAt: row.last_seen_at,
+          returned,
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      configured: true,
+      summary: {
+        devices: devices.length,
+        returningDevices: devices.filter((device) => device.returned).length,
+        guestsWithDevice: new Set(devices.map((device) => normalizeGuestName(device.guestName))).size,
+      },
+      devices,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function computeGiftBilling(catalogEnriched, inPersonReservations, paymentRows) {
+  let catalogTotal = 0;
+  let guaranteedTotal = 0;
+  let fixedCatalogTotal = 0;
+  let fixedGuaranteed = 0;
+  let quotaCatalogTotal = 0;
+  let quotaGuaranteed = 0;
+  const giftRows = [];
+
+  for (const gift of catalogEnriched) {
+    if (gift.type === "fixed") {
+      const value = Number(gift.value) || 0;
+      catalogTotal += value;
+      fixedCatalogTotal += value;
+      const guaranteed = gift.status === "reserved" ? value : 0;
+      guaranteedTotal += guaranteed;
+      fixedGuaranteed += guaranteed;
+      giftRows.push({
+        id: gift.id,
+        name: gift.name,
+        type: "fixed",
+        section: gift.section,
+        catalogAmount: value,
+        guaranteedAmount: guaranteed,
+        remainingAmount: Math.max(0, value - guaranteed),
+        status: gift.status,
+      });
+    } else if (gift.type === "quota") {
+      const goal = Number(gift.goal) || 0;
+      const contributed = Number(gift.contributed) || 0;
+      catalogTotal += goal;
+      quotaCatalogTotal += goal;
+      guaranteedTotal += contributed;
+      quotaGuaranteed += contributed;
+      giftRows.push({
+        id: gift.id,
+        name: gift.name,
+        type: "quota",
+        section: gift.section,
+        catalogAmount: goal,
+        guaranteedAmount: contributed,
+        remainingAmount: Math.max(0, goal - contributed),
+        status: gift.status,
+        progressPercent: gift.progressPercent,
+      });
+    } else if (gift.type === "open") {
+      const contributed = Number(gift.contributed) || 0;
+      giftRows.push({
+        id: gift.id,
+        name: gift.name,
+        type: "open",
+        section: gift.section,
+        catalogAmount: 0,
+        guaranteedAmount: contributed,
+        remainingAmount: 0,
+        status: gift.status,
+        contributionCount: gift.contributionCount ?? 0,
+      });
+    }
+  }
+
+  let committedInPerson = 0;
+  for (const row of inPersonReservations) {
+    committedInPerson += Number(row.amount) || 0;
+  }
+
+  let receivedOnline = 0;
+  let pendingOnline = 0;
+  for (const order of paymentRows) {
+    const amount = Number(order.amount) || 0;
+    const status = String(order.status || "").toLowerCase();
+    if (status === "approved" || status === "paid") receivedOnline += amount;
+    else if (status === "pending") pendingOnline += amount;
+  }
+
+  const remainingTotal = Math.max(0, catalogTotal - guaranteedTotal);
+  const progressPercent = catalogTotal > 0
+    ? Math.min(100, Math.round((guaranteedTotal / catalogTotal) * 100))
+    : 0;
+
+  giftRows.sort((left, right) => right.remainingAmount - left.remainingAmount || left.name.localeCompare(right.name, "pt-BR"));
+
+  const openGuaranteed = giftRows
+    .filter((row) => row.type === "open")
+    .reduce((sum, row) => sum + (Number(row.guaranteedAmount) || 0), 0);
+
+  return {
+    catalogTotal,
+    guaranteedTotal,
+    remainingTotal,
+    progressPercent,
+    fixedCatalogTotal,
+    fixedGuaranteed,
+    fixedRemaining: Math.max(0, fixedCatalogTotal - fixedGuaranteed),
+    quotaCatalogTotal,
+    quotaGuaranteed,
+    quotaRemaining: Math.max(0, quotaCatalogTotal - quotaGuaranteed),
+    openGuaranteed,
+    receivedOnline,
+    pendingOnline,
+    committedInPerson,
+    giftRows,
+  };
+}
+
+async function readGiftReservationsForSupport() {
+  const withPayment = "gift_reservations?select=id,gift_id,guest_name,gift_name,gift_type,amount,created_at,payment_order_id&order=created_at.desc&limit=200";
+  const withoutPayment = "gift_reservations?select=id,gift_id,guest_name,gift_name,gift_type,amount,created_at&order=created_at.desc&limit=200";
+  try {
+    return await readSupabaseTable(withPayment);
+  } catch {
+    const rows = await readSupabaseTable(withoutPayment);
+    return Array.isArray(rows) ? rows.map((row) => ({ ...row, payment_order_id: null })) : [];
+  }
+}
+
+async function readPaymentOrdersForSupport() {
+  try {
+    return await readSupabaseTable(
+      "payment_orders?select=id,gift_id,guest_name,gift_name,gift_type,amount,status,buyer_email,message,created_at,paid_at,approved_at&order=created_at.desc&limit=200",
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function loadGiftSupportDetails() {
+  const empty = {
+    catalog: [],
+    reservations: [],
+    inPersonReservations: [],
+    openContributions: [],
+    payments: [],
+    giftsAvailable: 0,
+    giftsReserved: 0,
+    giftsHidden: 0,
+    paymentTotals: { pending: 0, approved: 0, rejected: 0, other: 0 },
+    billing: {
+      catalogTotal: 0,
+      guaranteedTotal: 0,
+      remainingTotal: 0,
+      progressPercent: 0,
+      fixedCatalogTotal: 0,
+      fixedGuaranteed: 0,
+      fixedRemaining: 0,
+      quotaCatalogTotal: 0,
+      quotaGuaranteed: 0,
+      quotaRemaining: 0,
+      receivedOnline: 0,
+      pendingOnline: 0,
+      committedInPerson: 0,
+      openGuaranteed: 0,
+      giftRows: [],
+    },
+    summary: {
+      approvedAmount: 0,
+      pendingAmount: 0,
+      reservedAmount: 0,
+      uniqueReservers: 0,
+      uniqueInPersonReservers: 0,
+      uniquePayers: 0,
+      fixedAvailable: 0,
+      fixedReserved: 0,
+      quotaInProgress: 0,
+      openContributionsCount: 0,
+      openContributionsTotal: 0,
+    },
+    openContributions: [],
+  };
+
+  try {
+    const catalogRaw = await getPublicGifts();
+    const catalog = (Array.isArray(catalogRaw) ? catalogRaw : []).map((gift) => ({
+      id: gift.id,
+      name: gift.name,
+      type: gift.gift_type || gift.type,
+      section: gift.section,
+      category: gift.category,
+      status: gift.status,
+      value: gift.value == null ? null : Number(gift.value),
+      goal: gift.goal == null ? null : Number(gift.goal),
+      contributed: Number(gift.contributed_amount || gift.contributed || 0),
+      options: Array.isArray(gift.quota_options) ? gift.quota_options : [],
+    }));
+
+    const [
+      reservations,
+      payments,
+    ] = await Promise.all([
+      readGiftReservationsForSupport(),
+      readPaymentOrdersForSupport(),
+    ]);
+
+    let giftsAvailable = 0;
+    let giftsReserved = 0;
+    let giftsHidden = 0;
+    for (const gift of catalog) {
+      if (gift.status === "available") giftsAvailable += 1;
+      else if (gift.status === "reserved") giftsReserved += 1;
+      else if (gift.status === "hidden") giftsHidden += 1;
+    }
+
+    const reservationRows = (Array.isArray(reservations) ? reservations : []).map((row) => ({
+      ...row,
+      modality: row.payment_order_id == null ? "in_person" : "online",
+    }));
+    const inPersonReservations = reservationRows.filter((row) => row.modality === "in_person");
+    const paymentRows = Array.isArray(payments) ? payments : [];
+    const reservedByGift = new Map();
+    const contributionsByGift = new Map();
+    for (const row of reservationRows) {
+      const amount = Number(row.amount) || 0;
+      const existing = contributionsByGift.get(row.gift_id) || { count: 0, total: 0, last: null };
+      existing.count += 1;
+      existing.total += amount;
+      if (!existing.last || Date.parse(row.created_at || "") >= Date.parse(existing.last.at || "")) {
+        existing.last = {
+          guestName: row.guest_name,
+          amount: row.amount,
+          at: row.created_at,
+        };
+      }
+      contributionsByGift.set(row.gift_id, existing);
+
+      if (row.gift_type !== "open" && !reservedByGift.has(row.gift_id)) {
+        reservedByGift.set(row.gift_id, {
+          guestName: row.guest_name,
+          amount: row.amount,
+          at: row.created_at,
+        });
+      }
+    }
+
+    const openContributions = reservationRows.filter((row) => row.gift_type === "open");
+    let openContributionsTotal = 0;
+    for (const row of openContributions) {
+      openContributionsTotal += Number(row.amount) || 0;
+    }
+
+    const catalogEnriched = catalog.map((gift) => {
+      const contributions = contributionsByGift.get(gift.id);
+      return {
+        ...gift,
+        reservedBy: gift.type === "open" ? contributions?.last || null : reservedByGift.get(gift.id) || null,
+        contributionCount: contributions?.count ?? 0,
+        contributionTotal: contributions?.total ?? (gift.type === "open" ? gift.contributed : null),
+        progressPercent: gift.type === "quota" && gift.goal
+          ? Math.min(100, Math.round((gift.contributed / gift.goal) * 100))
+          : null,
+      };
+    });
+
+    const paymentTotals = { pending: 0, approved: 0, rejected: 0, other: 0 };
+    let approvedAmount = 0;
+    let pendingAmount = 0;
+    const reservers = new Set();
+    const inPersonReservers = new Set();
+    const payers = new Set();
+
+    for (const row of reservationRows) {
+      reservers.add(normalizeGuestName(row.guest_name));
+    }
+    for (const row of inPersonReservations) {
+      inPersonReservers.add(normalizeGuestName(row.guest_name));
+    }
+
+    for (const order of paymentRows) {
+      payers.add(normalizeGuestName(order.guest_name));
+      const amount = Number(order.amount) || 0;
+      const status = String(order.status || "").toLowerCase();
+      if (status === "pending") {
+        paymentTotals.pending += 1;
+        pendingAmount += amount;
+      } else if (status === "approved" || status === "paid") {
+        paymentTotals.approved += 1;
+        approvedAmount += amount;
+      } else if (status === "rejected" || status === "cancelled") {
+        paymentTotals.rejected += 1;
+      } else {
+        paymentTotals.other += 1;
+      }
+    }
+
+    let reservedAmount = 0;
+    let fixedAvailable = 0;
+    let fixedReserved = 0;
+    let quotaInProgress = 0;
+    for (const gift of catalogEnriched) {
+      if (gift.type === "fixed") {
+        if (gift.status === "available") fixedAvailable += 1;
+        if (gift.status === "reserved") {
+          fixedReserved += 1;
+          reservedAmount += Number(gift.value) || 0;
+        }
+      } else if (gift.type === "quota" && gift.contributed > 0 && gift.contributed < (gift.goal || 0)) {
+        quotaInProgress += 1;
+      }
+    }
+
+    const billing = computeGiftBilling(catalogEnriched, inPersonReservations, paymentRows);
+
+    return {
+      catalog: catalogEnriched,
+      reservations: reservationRows,
+      inPersonReservations,
+      openContributions,
+      payments: paymentRows,
+      giftsAvailable,
+      giftsReserved,
+      giftsHidden,
+      paymentTotals,
+      billing,
+      summary: {
+        approvedAmount,
+        pendingAmount,
+        reservedAmount,
+        uniqueReservers: reservers.size,
+        uniqueInPersonReservers: inPersonReservers.size,
+        uniquePayers: payers.size,
+        fixedAvailable,
+        fixedReserved,
+        quotaInProgress,
+        openContributionsCount: openContributions.length,
+        openContributionsTotal,
+      },
+    };
+  } catch (error) {
+    console.error("loadGiftSupportDetails failed:", error?.message || error);
+    return empty;
+  }
+}
+
+async function loadAlbumSupportStats() {
+  const base = {
+    configured: hasAlbumConfig,
+    publicOpen: isAlbumPubliclyOpen(),
+    publicOpenAt: albumPublicOpenAtRaw,
+    mediaCount: 0,
+    contributorCount: 0,
+    recentUploads: [],
+  };
+
+  if (!hasAlbumConfig) return base;
+
+  try {
+    const [mediaCount, mediaRows, contributorRows] = await Promise.all([
+      countSupabaseRows("album_media?select=id"),
+      readSupabaseTable(
+        `album_media?select=guest_name,category,created_at&order=created_at.desc&limit=25`,
+      ),
+      readSupabaseTable("album_media?select=guest_name&order=created_at.desc&limit=300"),
+    ]);
+    const rows = Array.isArray(mediaRows) ? mediaRows : [];
+    const contributorList = Array.isArray(contributorRows) ? contributorRows : [];
+    const contributors = new Set(
+      contributorList.map((row) => normalizeGuestName(row.guest_name)).filter(Boolean),
+    );
+
+    return {
+      ...base,
+      mediaCount,
+      contributorCount: contributors.size,
+      recentUploads: rows,
+    };
+  } catch {
+    return base;
+  }
+}
+
+async function buildSupportOverviewCached({ bypassCache = false } = {}) {
+  const now = Date.now();
+  if (!bypassCache && supportOverviewCache.payload && supportOverviewCache.expiresAt > now) {
+    return supportOverviewCache.payload;
+  }
+  if (supportOverviewBuildPromise) {
+    return supportOverviewBuildPromise;
+  }
+
+  supportOverviewBuildPromise = buildSupportOverview()
+    .then((payload) => {
+      supportOverviewCache = {
+        payload,
+        expiresAt: Date.now() + supportOverviewCacheTtlMs,
+      };
+      return payload;
+    })
+    .finally(() => {
+      supportOverviewBuildPromise = null;
+    });
+
+  return supportOverviewBuildPromise;
+}
+
+async function buildSupportOverview() {
+  if (!hasSupabaseConfig) {
+    throw new HttpError(503, "Supabase não configurado.");
+  }
+
+  const rows = await readSupabaseTable(
+    "rsvps?select=id,guest_name,party_size,primary_rsvp_id,created_at,updated_at&order=created_at.asc,guest_name.asc",
+  );
+  const allRows = Array.isArray(rows) ? rows : [];
+  const primaries = allRows.filter((row) => !row.primary_rsvp_id);
+  const companionsByPrimary = new Map();
+
+  for (const row of allRows) {
+    if (!row.primary_rsvp_id) continue;
+    const bucket = companionsByPrimary.get(row.primary_rsvp_id) || [];
+    bucket.push(row);
+    companionsByPrimary.set(row.primary_rsvp_id, bucket);
+  }
+
+  const titularByPartySize = {};
+  const companionByPartySize = {};
+
+  for (const row of allRows) {
+    if (row.primary_rsvp_id) incrementCount(companionByPartySize, row.party_size);
+    else incrementCount(titularByPartySize, row.party_size);
+  }
+
+  const households = primaries.map((primary) => {
+    const companions = companionsByPrimary.get(primary.id) || [];
+    const members = [
+      { name: primary.guest_name, partySize: primary.party_size },
+      ...companions.map((companion) => ({
+        name: companion.guest_name,
+        partySize: companion.party_size,
+      })),
+    ];
+
+    return {
+      id: primary.id,
+      titular: primary.guest_name,
+      partySize: primary.party_size,
+      createdAt: primary.created_at,
+      updatedAt: primary.updated_at,
+      members,
+    };
+  }).sort((left, right) => {
+    const leftTime = Date.parse(left.updatedAt || left.createdAt || "") || 0;
+    const rightTime = Date.parse(right.updatedAt || right.createdAt || "") || 0;
+    return rightTime - leftTime;
+  });
+
+  const segments = {
+    solo: { households: 0, people: 0 },
+    couples: { households: 0, people: 0 },
+    families: { households: 0, people: 0 },
+    withMinors: { households: 0, people: 0 },
+  };
+
+  const peopleByType = {};
+  for (const household of households) {
+    const people = householdPeopleCount(household);
+    peopleByType[household.partySize] = (peopleByType[household.partySize] || 0) + people;
+
+    const type = household.partySize;
+    if (type === "Somente eu") {
+      segments.solo.households += 1;
+      segments.solo.people += people;
+    } else if (type === "Casal") {
+      segments.couples.households += 1;
+      segments.couples.people += people;
+    } else if (type === "Família") {
+      segments.families.households += 1;
+      segments.families.people += people;
+    } else if (type === "Responsável e menores") {
+      segments.withMinors.households += 1;
+      segments.withMinors.people += people;
+    }
+  }
+
+  const recentConfirmations = households.slice(0, 12);
+
+  const confirmedGuestNames = new Set(
+    allRows.map((row) => normalizeGuestName(row.guest_name)).filter(Boolean),
+  );
+
+  const primaryNameById = new Map(households.map((household) => [household.id, household.titular]));
+
+  const [engagement, giftDetails, album, guestRemember] = await Promise.all([
+    loadGiftsEngagementStats(confirmedGuestNames),
+    loadGiftSupportDetails(),
+    loadAlbumSupportStats(),
+    loadGuestRememberStats(primaryNameById),
+  ]);
+
+  const engagementWithRemember = { ...engagement, guestRemember };
+
+  const engagementNames = new Set(
+    (engagement.visitorSessions || [])
+      .map((session) => session.guestName)
+      .filter(Boolean)
+      .map((name) => normalizeGuestName(name)),
+  );
+  const confirmedWithoutGiftVisit = primaries
+    .map((primary) => primary.guest_name)
+    .filter((name) => !engagementNames.has(normalizeGuestName(name)));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    counts: {
+      people: allRows.length,
+      households: primaries.length,
+      titularByPartySize,
+      companionByPartySize,
+      peopleByTitularType: peopleByType,
+    },
+    segments,
+    households,
+    recentConfirmations,
+    engagement: engagementWithRemember,
+    gifts: {
+      ...giftDetails,
+      engagement: engagementWithRemember,
+      insights: {
+        confirmedWithoutGiftVisit: confirmedWithoutGiftVisit.slice(0, 50),
+        confirmedWhoVisitedGifts: engagementWithRemember.confirmedVisitors ?? 0,
+      },
+    },
+    album,
+    services: {
+      supabaseConfigured: hasSupabaseConfig,
+      mercadoPagoConfigured: hasMercadoPagoConfig,
+      albumConfigured: hasAlbumConfig,
+      albumPublicOpen: isAlbumPubliclyOpen(),
+    },
+  };
 }
 
 async function insertSupabaseTable(path, payload) {
@@ -987,17 +2052,56 @@ async function handleApi(request, response, pathname) {
       mercadoPagoConfigured: hasMercadoPagoConfig,
       mercadoPagoMode: hasMercadoPagoConfig ? mercadoPagoMode : "",
       albumConfigured: hasAlbumConfig,
+      albumPublicOpenAt: albumPublicOpenAtRaw,
+      albumPublicOpen: isAlbumPubliclyOpen(),
     });
     return true;
   }
 
   try {
+    if (request.method === "POST" && pathname === "/api/engagement") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "engagement", 40, 10 * 60_000);
+      if (!hasSupabaseConfig) {
+        sendJson(response, 204, {});
+        return true;
+      }
+
+      const body = await readJsonBody(request);
+      const eventType = String(body.eventType || "").trim();
+      if (!siteEngagementEventTypes.has(eventType)) {
+        throw new HttpError(400, "Evento inválido.");
+      }
+      const sessionKey = requireText(body.sessionKey, "Sessão", { min: 8, max: 80 });
+      const guestNameRaw = String(body.guestName ?? "").trim().replace(/\s+/g, " ");
+      const guestName = guestNameRaw.length >= 2 ? guestNameRaw.slice(0, 120) : null;
+      const giftIdRaw = String(body.giftId ?? "").trim();
+      const giftId = /^[a-z0-9][a-z0-9-]{0,99}$/i.test(giftIdRaw) ? giftIdRaw : null;
+
+      try {
+        await insertSupabaseTable("site_engagement_events", {
+          event_type: eventType,
+          guest_name: guestName,
+          session_key: sessionKey,
+          ...(giftId ? { gift_id: giftId } : {}),
+        });
+      } catch {
+        // Tabela ainda não migrada: não quebra o site.
+      }
+
+      sendJson(response, 204, {});
+      return true;
+    }
+
     if (request.method === "GET" && pathname === "/api/album/session") {
       const session = readAlbumSession(request);
       sendJson(response, 200, {
         authenticated: Boolean(session),
         guestName: session?.guestName || null,
         isAlbumAdmin: Boolean(session && isAlbumAdmin(session.guestName)),
+        albumAvailable: Boolean(session && canAccessAlbum(session.guestName)),
+        albumPublicOpenAt: albumPublicOpenAtRaw,
+        albumPublicOpen: isAlbumPubliclyOpen(),
       });
       return true;
     }
@@ -1034,6 +2138,9 @@ async function handleApi(request, response, pathname) {
       if (!row?.guest_name) {
         throw new HttpError(403, "Não foi possível autenticar no álbum.");
       }
+      if (!canAccessAlbum(row.guest_name)) {
+        throw new HttpError(403, "O álbum coletivo abre no dia 28/11, às 15h.");
+      }
 
       sendJson(response, 200, {
         ok: true,
@@ -1053,9 +2160,83 @@ async function handleApi(request, response, pathname) {
       return true;
     }
 
+    if (pathname.startsWith("/api/support/") && !hasSupportPanelConfig) {
+      throw new HttpError(404, "Painel de apoio indisponível.");
+    }
+
+    if (request.method === "GET" && pathname === "/api/support/session") {
+      const session = readSupportSession(request);
+      sendJson(response, 200, {
+        authenticated: Boolean(session),
+        guestName: session?.guestName || null,
+      });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/support/login") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "support-login", 10, 10 * 60_000);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Painel de apoio indisponível.");
+      if (albumUploadSigningSecret.length < 32) throw new HttpError(503, "Painel de apoio indisponível.");
+
+      const body = await readJsonBody(request);
+      const guestName = requireText(body.guestName, "Nome", { min: 2, max: 120 });
+      const password = String(body.password ?? "");
+      if (!password) throw new HttpError(400, "Senha obrigatória.");
+
+      if (!canAccessSupportPanel(guestName)) {
+        throw new HttpError(403, "Somente Gabriel Domingues pode acessar o painel de apoio.");
+      }
+
+      let rows;
+      try {
+        rows = await callSupabaseRpc("authenticate_album_guest", {
+          p_guest_name: guestName,
+          p_password: password,
+        });
+      } catch (error) {
+        const message = String(error.message || "");
+        if (/senha incorreta/i.test(message)) throw new HttpError(403, "Senha incorreta.");
+        if (/não encontrado|nome obrigatório/i.test(message)) {
+          throw new HttpError(403, "Nome não encontrado nas confirmações. Use o nome exato da sua confirmação.");
+        }
+        throw new HttpError(403, message || "Não foi possível entrar no painel.");
+      }
+
+      const row = Array.isArray(rows) ? rows[0] : rows;
+      if (!row?.guest_name || !canAccessSupportPanel(row.guest_name)) {
+        throw new HttpError(403, "Somente Gabriel Domingues pode acessar o painel de apoio.");
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        guestName: row.guest_name,
+      }, {
+        "Set-Cookie": supportSessionCookieHeader(createSupportSessionToken(row.guest_name)),
+      });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/support/logout") {
+      validateSameOriginRequest(request);
+      sendJson(response, 200, { ok: true }, {
+        "Set-Cookie": supportSessionCookieHeader("", { clear: true }),
+      });
+      return true;
+    }
+
+    if (request.method === "GET" && pathname === "/api/support/overview") {
+      enforceRateLimit(request, "support-overview", 60, 60_000);
+      requireSupportSession(request);
+      const bypassCache = new URL(request.url, "http://127.0.0.1").searchParams.get("fresh") === "1";
+      const overview = await buildSupportOverviewCached({ bypassCache });
+      sendJson(response, 200, overview);
+      return true;
+    }
+
     if (request.method === "GET" && pathname === "/api/album/media") {
       enforceRateLimit(request, "album-media", 120, 60_000);
-      requireAlbumSession(request);
+      requireAlbumAccess(requireAlbumSession(request));
       if (!hasAlbumConfig) {
         sendJson(response, 200, {
           configured: false,
@@ -1082,6 +2263,7 @@ async function handleApi(request, response, pathname) {
       validateSameOriginRequest(request);
       enforceRateLimit(request, "album-delete", 30, 10 * 60_000);
       const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
       requireAlbumAdmin(session);
       if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
 
@@ -1113,19 +2295,22 @@ async function handleApi(request, response, pathname) {
     if (request.method === "POST" && pathname === "/api/album/upload-signature") {
       validateSameOriginRequest(request);
       enforceRateLimit(request, "album-signature", 600, 10 * 60_000);
-      requireAlbumSession(request);
       if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
+      const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
       const body = await readJsonBody(request);
       requireAlbumAccessCode(body.accessCode);
-      const guestName = requireFullGuestName(body.guestName, "Nome");
+      const guestName = requireFullGuestName(session.guestName, "Nome");
       const category = requireAlbumCategory(body.category);
       const file = requireAlbumFile(body);
+      const contentHash = requireContentHash(body.contentHash);
       const storageKey = `${albumR2KeyPrefix}${randomUUID()}.${albumFileExtensions.get(file.fileType)}`;
       const expiresAt = Date.now() + albumUploadUrlTtlSeconds * 1000;
       const uploadToken = createAlbumUploadToken({
         ...file,
         guestName,
         category,
+        contentHash,
         storageKey,
         expiresAt,
       });
@@ -1156,10 +2341,14 @@ async function handleApi(request, response, pathname) {
     if (request.method === "POST" && pathname === "/api/album/media") {
       validateSameOriginRequest(request);
       enforceRateLimit(request, "album-register", 600, 10 * 60_000);
-      requireAlbumSession(request);
       if (!hasAlbumConfig) throw new HttpError(503, "O armazenamento do álbum ainda não está configurado.");
+      const session = requireAlbumSession(request);
+      requireAlbumAccess(session);
       const body = await readJsonBody(request);
       const upload = await requireR2UploadResult(body);
+      if (normalizeGuestName(upload.guestName) !== normalizeGuestName(session.guestName)) {
+        throw new HttpError(403, "Autorização de upload inválida.");
+      }
       const existing = await readSupabaseTable(
         `album_media?select=${albumMediaSelect}&storage_key=eq.${encodeURIComponent(upload.storageKey)}&limit=1`,
       );
@@ -1167,6 +2356,7 @@ async function handleApi(request, response, pathname) {
         sendJson(response, 200, { media: normalizeAlbumMedia(existing[0]) });
         return true;
       }
+      await assertAlbumMediaHashAvailable(upload.contentHash);
       const inserted = await insertSupabaseTable("album_media", {
         guest_name: upload.guestName,
         category: upload.category,
@@ -1181,6 +2371,7 @@ async function handleApi(request, response, pathname) {
         height: upload.height,
         duration: upload.duration,
         etag: upload.etag,
+        content_hash: upload.contentHash,
         backup_status: "pending",
       });
       if (!inserted?.[0]) throw new Error("O Supabase não retornou a memória salva.");
@@ -1200,13 +2391,51 @@ async function handleApi(request, response, pathname) {
       return true;
     }
 
+    if (request.method === "GET" && pathname === "/api/rsvp/session") {
+      if (!hasSupabaseConfig) {
+        sendJson(response, 200, { authenticated: false });
+        return true;
+      }
+      const remembered = await resolveGuestRememberSession(request);
+      if (!remembered?.guest_name) {
+        sendJson(response, 200, { authenticated: false });
+        return true;
+      }
+      sendJson(response, 200, { authenticated: true, rsvp: remembered });
+      return true;
+    }
+
+    if (request.method === "POST" && pathname === "/api/rsvp/lookup") {
+      validateSameOriginRequest(request);
+      enforceRateLimit(request, "rsvp-lookup", 40, 10 * 60_000);
+      if (!hasSupabaseConfig) throw new HttpError(503, "Confirmações ainda não estão disponíveis.");
+      const body = await readJsonBody(request);
+      const guestName = requireFullGuestName(body.guestName, "Nome");
+      const record = await readRsvpGroupRecord(guestName);
+      if (!record?.guest_name) {
+        throw new HttpError(404, "Confirmação não encontrada para este nome.");
+      }
+      // Acompanhantes só aparecem para o aparelho que fez a confirmação.
+      const rememberedPrimaryId = await readRememberedPrimaryRsvpId(request);
+      sendJson(response, 200, {
+        rsvp: {
+          guest_name: record.guest_name,
+          party_size: record.party_size,
+          ...(rememberedPrimaryId === record.primaryId
+            ? { additional_guest_names: record.additional_guest_names }
+            : {}),
+        },
+      });
+      return true;
+    }
+
     if (request.method === "POST" && pathname === "/api/rsvp") {
       validateSameOriginRequest(request);
       enforceRateLimit(request, "rsvp", 20, 10 * 60_000);
       const body = await readJsonBody(request);
       const guestName = requireFullGuestName(body.guestName, "Nome");
       const partySize = String(body.partySize ?? "").trim();
-      if (!["Somente eu", "Casal", "Responsável e menores"].includes(partySize)) {
+      if (!["Somente eu", "Casal", "Família", "Responsável e menores"].includes(partySize)) {
         throw new HttpError(400, "Tipo de confirmação inválido.");
       }
       const additionalGuestNames = validateAdditionalGuestNames(
@@ -1214,6 +2443,7 @@ async function handleApi(request, response, pathname) {
         partySize,
         guestName,
       );
+      await assertRsvpChangeAllowed(request, guestName, additionalGuestNames);
 
       const rsvp = await callSupabaseRpc("confirm_rsvp", {
         p_guest_name: guestName,
@@ -1221,10 +2451,17 @@ async function handleApi(request, response, pathname) {
         p_additional_guest_names: additionalGuestNames,
       });
       const row = rsvp?.[0];
+      const extraHeaders = {};
+      if (row?.id && albumUploadSigningSecret.length >= 32) {
+        const rememberCookie = await issueGuestRememberToken(row.id, request);
+        if (rememberCookie) {
+          extraHeaders["Set-Cookie"] = guestRememberCookieHeader(rememberCookie);
+        }
+      }
       sendJson(response, 200, {
         rsvp: row,
         alreadyConfirmed: Boolean(row?.already_confirmed),
-      });
+      }, extraHeaders);
       return true;
     }
 
@@ -1253,7 +2490,7 @@ async function handleApi(request, response, pathname) {
         p_gift_id: requireGiftId(body.giftId),
         p_buyer_name: requireFullGuestName(body.buyerName, "Nome"),
         p_buyer_email: optionalEmail(body.buyerEmail),
-        p_message: optionalText(body.message, "Mensagem", 500),
+        p_message: optionalText(body.message, "Mensagem", maxGiftMessageLength),
         p_amount: requireAmount(body.amount),
       });
       if (!order?.[0]) {
@@ -1307,7 +2544,7 @@ async function handleApi(request, response, pathname) {
 
     return false;
   } catch (error) {
-    const guestNotInvited = error.message === guestNotInvitedMessage;
+    const guestNotInvited = guestNotInvitedMessagePattern.test(String(error.message || ""));
     const statusCode = guestNotInvited ? 403 : error instanceof HttpError ? error.statusCode : 400;
     const headers = error instanceof HttpError ? error.headers : {};
     sendJson(response, statusCode, {
@@ -1345,16 +2582,57 @@ const server = createServer(async (request, response) => {
   const albumPagePaths = new Set(["/album", "/album/", "/album.html"]);
   const albumLoginPaths = new Set(["/album/login", "/album/login/", "/album-login.html"]);
 
-  if (albumPagePaths.has(pathname) && !readAlbumSession(request)) {
-    response.writeHead(302, responseHeaders({ Location: "/album/login", "Cache-Control": "no-store" }));
-    response.end();
-    return;
+  if (albumPagePaths.has(pathname)) {
+    const session = readAlbumSession(request);
+    if (!session) {
+      response.writeHead(302, responseHeaders({ Location: "/album/login", "Cache-Control": "no-store" }));
+      response.end();
+      return;
+    }
+    if (!canAccessAlbum(session.guestName)) {
+      response.writeHead(302, responseHeaders({ Location: "/#album", "Cache-Control": "no-store" }));
+      response.end();
+      return;
+    }
   }
 
-  if (albumLoginPaths.has(pathname) && readAlbumSession(request)) {
-    response.writeHead(302, responseHeaders({ Location: "/album", "Cache-Control": "no-store" }));
-    response.end();
-    return;
+  if (albumLoginPaths.has(pathname)) {
+    const session = readAlbumSession(request);
+    if (session && canAccessAlbum(session.guestName)) {
+      response.writeHead(302, responseHeaders({ Location: "/album", "Cache-Control": "no-store" }));
+      response.end();
+      return;
+    }
+  }
+
+  const supportPagePaths = new Set(["/apoio", "/apoio/"]);
+  const supportLoginPaths = new Set(["/apoio/login", "/apoio/login/"]);
+  const supportAssetPaths = new Set(["/support.css", "/support.js", "/support-login.js"]);
+
+  if (supportPagePaths.has(pathname) || supportLoginPaths.has(pathname) || supportAssetPaths.has(pathname)) {
+    if (!hasSupportPanelConfig) {
+      response.writeHead(404, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
+      response.end("Arquivo não encontrado");
+      return;
+    }
+  }
+
+  if (supportPagePaths.has(pathname)) {
+    const session = readSupportSession(request);
+    if (!session) {
+      response.writeHead(302, responseHeaders({ Location: "/apoio/login", "Cache-Control": "no-store" }));
+      response.end();
+      return;
+    }
+  }
+
+  if (supportLoginPaths.has(pathname)) {
+    const session = readSupportSession(request);
+    if (session) {
+      response.writeHead(302, responseHeaders({ Location: "/apoio", "Cache-Control": "no-store" }));
+      response.end();
+      return;
+    }
   }
 
   const bundledFile = publicFiles.get(pathname);

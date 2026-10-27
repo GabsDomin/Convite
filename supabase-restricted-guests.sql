@@ -81,7 +81,7 @@ begin
     where rg.active
       and rg.normalized_guest_name = normalized_name
   ) then
-    raise exception 'Infelizmente, seu nome não está na lista de convidados.';
+    raise exception 'Infelizmente, % não está na lista de convidados.', clean_name;
   end if;
 
   insert into public.rsvps (guest_name, party_size)

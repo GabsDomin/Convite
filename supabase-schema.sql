@@ -20,7 +20,7 @@ create unique index if not exists rsvps_normalized_guest_name_key
 create table if not exists public.gifts (
   id text primary key,
   name text not null,
-  gift_type text not null check (gift_type in ('fixed', 'quota')),
+  gift_type text not null check (gift_type in ('fixed', 'quota', 'open')),
   section text not null check (section in ('daily', 'home', 'special', 'quotas')),
   category text,
   description text not null,
@@ -32,10 +32,12 @@ create table if not exists public.gifts (
   sort_order integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint fixed_gift_value_required check (
+  constraint gifts_type_fields_required check (
     (gift_type = 'fixed' and value is not null and goal is null and quota_options is null)
     or
     (gift_type = 'quota' and value is null and goal is not null and quota_options is not null)
+    or
+    (gift_type = 'open' and value is null and goal is null and quota_options is null)
   )
 );
 
@@ -50,7 +52,7 @@ create table if not exists public.gift_reservations (
     lower(regexp_replace(trim(guest_name), '\s+', ' ', 'g'))
   ) stored,
   gift_name text not null,
-  gift_type text not null check (gift_type in ('fixed', 'quota')),
+  gift_type text not null check (gift_type in ('fixed', 'quota', 'open')),
   amount integer not null check (amount > 0),
   created_at timestamptz not null default now()
 );
@@ -166,7 +168,8 @@ values
   ('mesa-jantar', 'Cota da mesa de jantar', 'quota', 'quotas', 'Cota da casa', 'Para criarmos momentos especiais à mesa.', null, 1500, array[150, 250, 500], 430),
   ('eletrodomesticos', 'Cota dos eletrodomésticos', 'quota', 'quotas', 'Cota da casa', 'Para completar os itens essenciais da nossa casa.', null, 3000, array[150, 250, 500, 1000], 440),
   ('moveis', 'Cota para móveis da casa', 'quota', 'quotas', 'Cota da casa', 'Para nos ajudar a mobiliar nosso novo lar.', null, 3000, array[150, 250, 500, 1000], 450),
-  ('casa-nova', 'Cota da casa nova', 'quota', 'quotas', 'Cota da casa', 'Para contribuir com esse novo começo.', null, 5000, array[150, 250, 500, 1000], 460)
+  ('casa-nova', 'Cota da casa nova', 'quota', 'quotas', 'Cota da casa', 'Para contribuir com esse novo começo.', null, 5000, array[150, 250, 500, 1000], 460),
+  ('contribuicao-livre', 'Contribua com o valor que quiser', 'open', 'quotas', 'Cota da casa', 'Presenteie com o valor que fizer sentido para você — quantas vezes quiser, cada gesto nos ajuda a montar nosso cantinho com carinho.', null, null, null, 375, 'available')
 on conflict (id) do update set
   name = excluded.name,
   gift_type = excluded.gift_type,

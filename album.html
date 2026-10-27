@@ -12,7 +12,7 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/png" href="/assets/favicon.png" />
-    <link rel="stylesheet" href="/album.css?v=20260721-8" />
+    <link rel="stylesheet" href="/album.css?v=20260722-4" />
   </head>
   <body>
     <header class="album-topbar">
@@ -110,10 +110,9 @@
 
         <p class="dialog-copy">Assim que o envio terminar, as fotos e vídeos aparecerão na galeria para todos.</p>
 
-        <label>
-          Seu nome
-          <input name="guestName" type="text" maxlength="80" placeholder="Nome e sobrenome" required />
-        </label>
+        <p class="upload-user" data-upload-user hidden>
+          Publicando como <strong data-upload-user-name></strong>
+        </p>
 
         <label>
           Momento
@@ -231,10 +230,10 @@
         <div class="lightbox-caption" data-lightbox-caption></div>
         <div class="lightbox-actions">
           <button class="button primary compact lightbox-download" type="button" data-download-media hidden>
-            Baixar original
+            Baixar
           </button>
           <button class="button danger compact lightbox-delete" type="button" data-delete-media hidden>
-            Excluir memória
+            Excluir
           </button>
         </div>
       </div>
@@ -289,6 +288,6 @@
     </nav>
 
     <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
-    <script src="/album.js?v=20260721-7" defer></script>
+    <script src="/album.js?v=20260722-4" defer></script>
   </body>
 </html>

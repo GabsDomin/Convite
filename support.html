@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Painel de apoio | Gabriel &amp; Halanaia</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/png" href="/assets/favicon.png" />
+    <link rel="stylesheet" href="/support.css?v=7" />
+  </head>
+  <body class="support-page">
+    <div class="support-shell">
+      <header class="support-topbar">
+        <div class="support-brand">
+          <h1>Painel de apoio</h1>
+          <p>Gabriel &amp; Halanaia · acompanhe convidados, presentes e álbum</p>
+          <p class="support-meta" data-support-operator hidden></p>
+        </div>
+        <div class="support-actions">
+          <button class="support-btn" type="button" data-support-export-csv>Exportar CSV</button>
+          <button class="support-btn" type="button" data-support-refresh>Atualizar</button>
+          <button class="support-btn" type="button" data-support-logout>Sair</button>
+        </div>
+      </header>
+
+      <p class="support-error" data-support-error hidden></p>
+
+      <nav class="support-tabs" aria-label="Seções do painel" data-support-tabs>
+        <button type="button" class="support-tab is-active" data-support-tab="resumo">Resumo</button>
+        <button type="button" class="support-tab" data-support-tab="confirmacoes">Confirmações</button>
+        <button type="button" class="support-tab" data-support-tab="presentes">Presentes</button>
+        <button type="button" class="support-tab" data-support-tab="faturamento">Faturamento</button>
+        <button type="button" class="support-tab" data-support-tab="album">Álbum</button>
+      </nav>
+
+      <p class="support-meta support-updated-line" data-support-updated>Carregando…</p>
+
+      <section class="support-tab-panel is-active" data-support-panel="resumo">
+        <div class="support-grid" data-support-stats aria-live="polite"></div>
+        <div class="support-split">
+          <article class="support-subpanel">
+            <h2>Grupos por tipo</h2>
+            <ul class="support-breakdown" data-support-segments></ul>
+          </article>
+          <article class="support-subpanel">
+            <h2>Confirmações recentes</h2>
+            <ul class="support-timeline" data-support-recent-rsvp></ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="support-tab-panel" data-support-panel="confirmacoes" hidden>
+        <div class="support-panel support-panel--confirmacoes">
+          <div class="support-toolbar">
+            <div class="support-filters" data-support-rsvp-filters role="tablist" aria-label="Filtrar confirmações">
+              <button type="button" class="support-chip is-active" data-rsvp-filter="all">Todos</button>
+              <button type="button" class="support-chip" data-rsvp-filter="Somente eu">Somente eu</button>
+              <button type="button" class="support-chip" data-rsvp-filter="Casal">Casal</button>
+              <button type="button" class="support-chip" data-rsvp-filter="Família">Família</button>
+              <button type="button" class="support-chip" data-rsvp-filter="Responsável e menores">Com filhos</button>
+            </div>
+            <label class="support-search">
+              <span class="visually-hidden">Buscar convidado</span>
+              <input type="search" placeholder="Buscar por nome…" autocomplete="off" data-support-search />
+            </label>
+          </div>
+          <div class="support-table-wrap">
+            <table class="support-table">
+              <thead>
+                <tr>
+                  <th scope="col">Titular</th>
+                  <th scope="col">Tipo</th>
+                  <th scope="col">Pessoas</th>
+                  <th scope="col">Atualizado</th>
+                  <th scope="col">Grupo</th>
+                </tr>
+              </thead>
+              <tbody data-support-rsvp-body></tbody>
+            </table>
+          </div>
+          <p class="support-empty" data-support-empty hidden>Nenhuma confirmação encontrada.</p>
+        </div>
+      </section>
+
+      <section class="support-tab-panel" data-support-panel="presentes" hidden>
+        <div class="support-toolbar support-toolbar-presentes">
+          <div class="support-filters" data-support-gift-views role="tablist" aria-label="Visões de presentes">
+            <button type="button" class="support-chip is-active" data-gift-view="visao">Visão geral</button>
+            <button type="button" class="support-chip" data-gift-view="catalogo">Catálogo</button>
+            <button type="button" class="support-chip" data-gift-view="visitantes">Visitantes</button>
+            <button type="button" class="support-chip" data-gift-view="reservas">Todas reservas</button>
+            <button type="button" class="support-chip" data-gift-view="pessoalmente">Pessoalmente</button>
+            <button type="button" class="support-chip" data-gift-view="valor-livre">Valor livre</button>
+            <button type="button" class="support-chip" data-gift-view="pagamentos">Pagamentos online</button>
+            <button type="button" class="support-chip" data-gift-view="insights">Insights</button>
+          </div>
+          <button class="support-btn" type="button" data-support-export-gifts>Exportar presentes (CSV)</button>
+        </div>
+
+        <div class="support-gift-view is-active" data-gift-panel="visao">
+          <div class="support-grid" data-support-gift-stats></div>
+          <article class="support-subpanel">
+            <h2>Funil da lista de presentes</h2>
+            <ul class="support-funnel" data-support-gift-funnel></ul>
+          </article>
+        </div>
+
+        <div class="support-gift-view" data-gift-panel="catalogo" hidden>
+          <div class="support-panel">
+            <div class="support-toolbar">
+              <div class="support-filters" data-support-catalog-filters>
+                <button type="button" class="support-chip is-active" data-catalog-filter="all">Todos</button>
+                <button type="button" class="support-chip" data-catalog-filter="available">Disponíveis</button>
+                <button type="button" class="support-chip" data-catalog-filter="reserved">Reservados</button>
+                <button type="button" class="support-chip" data-catalog-filter="quota">Cotas</button>
+                <button type="button" class="support-chip" data-catalog-filter="open">Valor livre</button>
+              </div>
+            </div>
+            <div class="support-table-wrap">
+              <table class="support-table">
+                <thead>
+                  <tr>
+                    <th>Presente</th>
+                    <th>Tipo</th>
+                    <th>Status</th>
+                    <th>Valor / meta</th>
+                    <th>Reservado por</th>
+                  </tr>
+                </thead>
+                <tbody data-support-catalog-body></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="support-gift-view" data-gift-panel="visitantes" hidden>
+          <p class="support-hint" data-support-engagement-hint></p>
+          <div class="support-grid support-grid--compact" data-support-remember-stats hidden></div>
+          <article class="support-subpanel support-subpanel--table">
+            <h2>Sessões na lista de presentes</h2>
+            <div class="support-table-wrap">
+              <table class="support-table">
+                <thead>
+                  <tr>
+                    <th>Visitante</th>
+                    <th>RSVP</th>
+                    <th>Visita</th>
+                    <th>Viu seção</th>
+                    <th>Abriu lista</th>
+                    <th>Abriu presente</th>
+                    <th>Primeira vez</th>
+                    <th>Última vez</th>
+                  </tr>
+                </thead>
+                <tbody data-support-visitors-body></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="support-subpanel support-subpanel--table">
+            <h2>Aparelhos lembrados (cookie após confirmar)</h2>
+            <p class="support-hint support-hint--tight" data-support-remember-hint></p>
+            <div class="support-table-wrap">
+              <table class="support-table">
+                <thead>
+                  <tr>
+                    <th>Convidado</th>
+                    <th>1º registro</th>
+                    <th>Último acesso</th>
+                    <th>Voltou depois?</th>
+                  </tr>
+                </thead>
+                <tbody data-support-remember-devices-body></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <div class="support-gift-view" data-gift-panel="reservas" hidden>
+          <p class="support-hint">Todas as reservas gravadas no site, incluindo as que vieram de pagamento online aprovado.</p>
+          <div class="support-table-wrap">
+            <table class="support-table">
+              <thead>
+                <tr>
+                  <th>Convidado</th>
+                  <th>Presente</th>
+                  <th>Tipo</th>
+                  <th>Valor</th>
+                  <th>Modalidade</th>
+                  <th>Data</th>
+                </tr>
+              </thead>
+              <tbody data-support-reservations-body></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="support-gift-view" data-gift-panel="pessoalmente" hidden>
+          <p class="support-hint" data-support-in-person-hint></p>
+          <div class="support-table-wrap">
+            <table class="support-table">
+              <thead>
+                <tr>
+                  <th>Convidado</th>
+                  <th>Presente</th>
+                  <th>Tipo</th>
+                  <th>Valor</th>
+                  <th>Data</th>
+                </tr>
+              </thead>
+              <tbody data-support-in-person-body></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="support-gift-view" data-gift-panel="valor-livre" hidden>
+          <p class="support-hint" data-support-open-hint></p>
+          <div class="support-table-wrap">
+            <table class="support-table">
+              <thead>
+                <tr>
+                  <th>Convidado</th>
+                  <th>Presente</th>
+                  <th>Valor</th>
+                  <th>Modalidade</th>
+                  <th>Data</th>
+                </tr>
+              </thead>
+              <tbody data-support-open-body></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="support-gift-view" data-gift-panel="pagamentos" hidden>
+          <div class="support-toolbar">
+            <div class="support-filters" data-support-payment-filters>
+              <button type="button" class="support-chip is-active" data-payment-filter="all">Todos</button>
+              <button type="button" class="support-chip" data-payment-filter="pending">Pendentes</button>
+              <button type="button" class="support-chip" data-payment-filter="approved">Aprovados</button>
+              <button type="button" class="support-chip" data-payment-filter="rejected">Recusados</button>
+            </div>
+          </div>
+          <div class="support-table-wrap">
+            <table class="support-table">
+              <thead>
+                <tr>
+                  <th>Convidado</th>
+                  <th>Presente</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th>E-mail</th>
+                  <th>Mensagem</th>
+                  <th>Data</th>
+                </tr>
+              </thead>
+              <tbody data-support-payments-body></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="support-gift-view" data-gift-panel="insights" hidden>
+          <div class="support-split">
+            <article class="support-subpanel">
+              <h2>Confirmaram presença e ainda não apareceram na lista</h2>
+              <ul class="support-timeline" data-support-no-gift-visit></ul>
+            </article>
+            <article class="support-subpanel">
+              <h2>Resumo financeiro simbólico</h2>
+              <ul class="support-breakdown" data-support-gift-money></ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="support-tab-panel" data-support-panel="faturamento" hidden>
+        <p class="support-hint" data-support-billing-hint></p>
+        <div class="support-billing-hero">
+          <article class="support-billing-card support-billing-card--primary">
+            <span class="support-billing-label">Garantido na lista</span>
+            <strong class="support-billing-value" data-support-billing-guaranteed>—</strong>
+            <span class="support-billing-note">Fixos reservados + cotas já contribuídas</span>
+          </article>
+          <article class="support-billing-card support-billing-card--warn">
+            <span class="support-billing-label">Ainda falta</span>
+            <strong class="support-billing-value" data-support-billing-remaining>—</strong>
+            <span class="support-billing-note">Meta total menos o garantido</span>
+          </article>
+          <article class="support-billing-card">
+            <span class="support-billing-label">Meta da lista</span>
+            <strong class="support-billing-value" data-support-billing-catalog>—</strong>
+            <div class="support-billing-progress" aria-hidden="true">
+              <span data-support-billing-progress-bar></span>
+            </div>
+            <span class="support-billing-note" data-support-billing-progress-label>0% da meta</span>
+          </article>
+        </div>
+
+        <div class="support-grid" data-support-billing-stats></div>
+
+        <div class="support-split">
+          <article class="support-subpanel">
+            <h2>Fixos vs cotas</h2>
+            <ul class="support-breakdown" data-support-billing-split></ul>
+          </article>
+          <article class="support-subpanel">
+            <h2>Caixa (online e pessoal)</h2>
+            <ul class="support-breakdown" data-support-billing-cash></ul>
+          </article>
+        </div>
+
+        <article class="support-subpanel support-subpanel--table">
+          <h2>Por presente</h2>
+          <div class="support-table-wrap">
+            <table class="support-table">
+              <thead>
+                <tr>
+                  <th>Presente</th>
+                  <th>Tipo</th>
+                  <th>Meta</th>
+                  <th>Garantido</th>
+                  <th>Falta</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody data-support-billing-gifts-body></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="support-tab-panel" data-support-panel="album" hidden>
+        <div class="support-grid" data-support-album-stats></div>
+        <article class="support-subpanel">
+          <h2>Envios recentes</h2>
+          <ul class="support-timeline" data-support-album-recent></ul>
+        </article>
+      </section>
+    </div>
+
+    <style>
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+    </style>
+    <script src="/support.js?v=9" defer></script>
+  </body>
+</html>

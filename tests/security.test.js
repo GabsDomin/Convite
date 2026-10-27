@@ -27,19 +27,23 @@ test("migração de acompanhantes mantém a RPC restrita ao servidor", async () 
 });
 
 test("lista restrita é privada e bloqueia a confirmação antes de salvar", async () => {
-  const [restrictedGuestsSql, server, script] = await Promise.all([
+  const [restrictedGuestsSql, rsvpSql, server, script] = await Promise.all([
     projectFile("supabase-restricted-guests.sql"),
+    projectFile("supabase-rsvp-per-guest-functions-only.sql"),
     projectFile("server.js"),
     projectFile("script.js"),
   ]);
 
   assert.match(restrictedGuestsSql, /alter table public\.restricted_guests enable row level security/i);
   assert.match(restrictedGuestsSql, /revoke all on table public\.restricted_guests from public, anon, authenticated/i);
-  assert.match(restrictedGuestsSql, /if exists[\s\S]*?restricted_guests[\s\S]*?raise exception 'Infelizmente, seu nome não está na lista de convidados\.'/i);
+  assert.match(restrictedGuestsSql, /raise exception 'Infelizmente, % não está na lista de convidados\.'/i);
+  assert.match(rsvpSql, /blocked_guest_name/);
+  assert.match(rsvpSql, /raise exception 'Infelizmente, % não está na lista de convidados\.'/i);
   assert.ok(restrictedGuestsSql.indexOf("if exists") < restrictedGuestsSql.indexOf("insert into public.rsvps"));
+  assert.match(server, /guestNotInvitedMessagePattern/);
   assert.match(server, /code: "guest_not_invited"/);
   assert.match(script, /error\.code === "guest_not_invited"/);
-  assert.match(script, /Infelizmente, seu nome não está na lista de convidados\./);
+  assert.match(script, /showGuestNotInvited\(draft, error\.message\)/);
 });
 
 test("frontend escapa conteúdo remoto e não contém manipulador inline", async () => {

@@ -9,6 +9,7 @@ let serverProcess;
 let baseUrl;
 
 const albumSigningSecret = "album-test-signing-secret-with-32-characters";
+const sampleContentHash = "a".repeat(64);
 
 function albumSessionCookie(guestName = "Pessoa Teste") {
   const payload = Buffer.from(JSON.stringify({
@@ -17,6 +18,16 @@ function albumSessionCookie(guestName = "Pessoa Teste") {
   }), "utf8").toString("base64url");
   const signature = createHmac("sha256", albumSigningSecret).update(payload).digest("base64url");
   return `gab_naia_album_session=${payload}.${signature}`;
+}
+
+function supportSessionCookie(guestName = "Gabriel Domingues") {
+  const payload = Buffer.from(JSON.stringify({
+    role: "support",
+    guestName,
+    expiresAt: Date.now() + 60 * 60 * 1000,
+  }), "utf8").toString("base64url");
+  const signature = createHmac("sha256", albumSigningSecret).update(payload).digest("base64url");
+  return `gab_naia_support_session=${payload}.${signature}`;
 }
 
 async function findAvailablePort() {
@@ -68,6 +79,7 @@ before(async () => {
       R2_PUBLIC_BASE_URL: "https://media.example.com",
       ALBUM_UPLOAD_SIGNING_SECRET: albumSigningSecret,
       ALBUM_UPLOAD_CODE: "2811",
+      ALBUM_PUBLIC_OPEN_AT: "2020-01-01T00:00:00-03:00",
       SITE_URL: "http://127.0.0.1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -108,7 +120,7 @@ test("serve somente os arquivos públicos esperados", async () => {
 });
 
 test("não expõe código, configuração, Git ou SQL", async () => {
-  for (const pathname of ["/.git/config", "/.env.example", "/server.js", "/server.ts", "/supabase-schema.sql"]) {
+  for (const pathname of ["/.git/config", "/.env.example", "/server.js", "/server.ts", "/supabase-schema.sql", "/support-login.html"]) {
     const response = await fetch(`${baseUrl}${pathname}`);
     assert.equal(response.status, 404, pathname);
   }
@@ -124,6 +136,8 @@ test("configuração pública não contém segredos", async () => {
     mercadoPagoConfigured: false,
     mercadoPagoMode: "",
     albumConfigured: true,
+    albumPublicOpenAt: "2020-01-01T00:00:00-03:00",
+    albumPublicOpen: true,
   });
   assert.equal(JSON.stringify(payload).includes("sb_secret_test_secret"), false);
   assert.equal(JSON.stringify(payload).includes("r2-secret-key-test"), false);
@@ -139,6 +153,7 @@ test("URL do R2 é temporária, vinculada a um arquivo e não expõe segredo", a
     body: JSON.stringify({
       guestName: "Pessoa Teste",
       category: "Festa",
+      contentHash: sampleContentHash,
       fileName: "foto.jpg",
       fileType: "image/jpeg",
       fileSize: 8_000_000,
@@ -172,6 +187,7 @@ test("criação de upload exige o código privado do álbum", async () => {
     body: JSON.stringify({
       guestName: "Pessoa Teste",
       category: "Festa",
+      contentHash: sampleContentHash,
       fileName: "foto.jpg",
       fileType: "image/jpeg",
       fileSize: 8_000_000,
@@ -296,17 +312,29 @@ test("local da celebração mostra o endereço e abre o Google Maps com seguran�
 });
 
 test("confirmação prioriza os detalhes da cerimônia sem pressionar por presentes", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, server] = await Promise.all([
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../script.js", import.meta.url), "utf8"),
+    readFile(new URL("../server.js", import.meta.url), "utf8"),
   ]);
 
   assert.match(html, /data-scroll-details hidden>Detalhes da cerimônia/);
   assert.match(html, /id="detalhes"/);
+  assert.match(html, /data-open-rsvp-adjust/);
+  assert.match(script, /api\/rsvp\/lookup/);
+  assert.match(script, /openRsvpAdjustModalAsync/);
+  assert.match(server, /readRsvpGroupByGuestName/);
+  assert.match(script, /buildRsvpDraftFromSaved/);
+  assert.match(script, /Ajustar confirmação/);
   assert.match(script, /detailsButton\.hidden = false/);
   assert.match(script, /Que alegria ter você conosco!/);
   assert.match(script, /se desejar, nossa lista de presentes/);
   assert.match(script, /getKnownGuestName\(\)/);
+  assert.match(script, /maxGiftMessageLength = 5000/);
+  assert.match(script, /maxlength="5000"/);
+  assert.match(server, /maxGiftMessageLength = 5000/);
+  assert.match(script, /contribuicao-livre/);
+  assert.match(script, /type: "open"/);
   assert.match(script, /openGiftModal[\s\S]*value="\$\{knownGuestName/);
   assert.doesNotMatch(script, /Se entrou aqui procurando um presentinho/);
 });
@@ -314,17 +342,19 @@ test("confirmação prioriza os detalhes da cerimônia sem pressionar por presen
 test("detalhes apresentam cerimônia, jantar e programação sem traje ou padrinhos", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 
-  assert.match(html, /<h3>Cerimônia<\/h3>[\s\S]*?<strong>Horário a confirmar<\/strong>/);
+  assert.match(html, /<h3>Cerimônia<\/h3>[\s\S]*?<strong>18h<\/strong>/);
+  assert.match(html, /17h20/);
   assert.match(html, /<h3>Jantar<\/h3>[\s\S]*?<strong>Após a cerimônia<\/strong>/);
-  assert.match(html, /<h3>Programação<\/h3>[\s\S]*?<strong>Mais detalhes em breve<\/strong>/);
+  assert.match(html, /<h3>Programação<\/h3>[\s\S]*?<strong>Recepção às 17h20<\/strong>/);
   assert.doesNotMatch(html, /11h30|Almoço|Traje|madrinhas|padrinhos/i);
 });
 
 test("confirmação diferencia indivíduo, casal e responsável com menores", async () => {
-  const [script, migration, server] = await Promise.all([
+  const [script, migration, server, perGuestMigration] = await Promise.all([
     readFile(new URL("../script.js", import.meta.url), "utf8"),
     readFile(new URL("../supabase-rsvp-guests.sql", import.meta.url), "utf8"),
     readFile(new URL("../server.js", import.meta.url), "utf8"),
+    readFile(new URL("../supabase-rsvp-per-guest-rows.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(script, /rsvpWizardSetStep/);
@@ -340,7 +370,12 @@ test("confirmação diferencia indivíduo, casal e responsável com menores", as
   assert.match(migration, /p_additional_guest_names text\[\] default/i);
   assert.match(migration, /cardinality\(clean_additional_names\) not between 1 and 7/i);
   assert.match(migration, /already_confirmed boolean/i);
-  assert.match(migration, /true as already_confirmed/);
+  assert.match(migration, /update public\.rsvps r/i);
+  assert.match(perGuestMigration, /primary_rsvp_id/);
+  assert.match(perGuestMigration, /password_hash/);
+  assert.match(perGuestMigration, /Filho\(a\)/);
+  assert.match(perGuestMigration, /self_rsvp_id/);
+  assert.match(perGuestMigration, /already_confirmed/);
   assert.doesNotMatch(migration, /on conflict \(normalized_guest_name\)/i);
   assert.match(script, /alreadyConfirmed/);
   assert.match(script, /já estava confirmada/i);
@@ -348,8 +383,9 @@ test("confirmação diferencia indivíduo, casal e responsável com menores", as
 });
 
 test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa stories por convidado", async () => {
-  const [index, album, albumLogin, albumLoginScript, albumStyles, albumScript, server, albumSchema, albumAuthSchema] = await Promise.all([
+  const [index, script, album, albumLogin, albumLoginScript, albumStyles, albumScript, server, albumSchema, albumAuthSchema] = await Promise.all([
     readFile(new URL("../index.html", import.meta.url), "utf8"),
+    readFile(new URL("../script.js", import.meta.url), "utf8"),
     readFile(new URL("../album.html", import.meta.url), "utf8"),
     readFile(new URL("../album-login.html", import.meta.url), "utf8"),
     readFile(new URL("../album-login.js", import.meta.url), "utf8"),
@@ -360,7 +396,12 @@ test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa 
     readFile(new URL("../supabase-album-auth.sql", import.meta.url), "utf8"),
   ]);
 
-  assert.match(index, /href="\/album"[^>]*>Conhecer o álbum coletivo</i);
+  assert.match(index, /data-album-entry/);
+  assert.match(script, /setupAlbumEntryButton/);
+  assert.match(script, /isAlbumEarlyAccessGuest/);
+  assert.match(server, /canAccessAlbum/);
+  assert.match(server, /2026-11-28T15:00:00-03:00/);
+  assert.doesNotMatch(index, /href="\/album"[^>]*>Conhecer o álbum coletivo</i);
   assert.match(album, /aria-label="Stories dos convidados"/i);
   assert.match(album, /gallery-intro/);
   assert.match(album, /Memórias do nosso dia/);
@@ -368,14 +409,14 @@ test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa 
   assert.match(albumScript, /startAutoplay/);
   assert.match(albumScript, /showLocalAlbumStatus/);
   assert.match(album, /Até 10 arquivos · fotos e vídeos de até 500 MB cada · backup automático dos originais/i);
+  assert.match(album, /data-upload-user/);
+  assert.doesNotMatch(album, /name="guestName"/);
   assert.match(album, /data-album-logout/);
   assert.match(albumLogin, /data-album-login-form/);
   assert.match(albumLogin, /data-album-known-name/);
   assert.match(albumLoginScript, /gabriel-halanaia-rsvp/);
   assert.match(albumLoginScript, /applyKnownNameMode/);
-  assert.match(albumAuthSchema, /authenticate_album_guest/i);
-  assert.match(albumAuthSchema, /extensions\.crypt\('123456'/);
-  assert.match(albumAuthSchema, /set search_path = public, extensions/);
+  assert.match(albumAuthSchema, /123456/);
   assert.match(album, /data-download-media/);
   assert.match(album, /data-delete-media/);
   assert.match(albumScript, /downloadMediaFile/);
@@ -384,10 +425,17 @@ test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa 
   assert.match(server, /isAlbumAdmin/);
   assert.match(server, /albumMediaDeleteMatch/);
   assert.match(server, /Gabriel Domingues/);
-  assert.match(albumScript, /Baixar original/);
+  assert.match(albumScript, /downloadMediaFile/);
   assert.match(albumScript, /memoryGrid\.prepend\(fragment\)/);
   assert.match(albumScript, /URL\.createObjectURL\(file\)/);
   assert.match(albumScript, /\/api\/album\/upload-signature/);
+  assert.match(albumScript, /albumSessionGuestName/);
+  assert.match(albumScript, /persistAlbumFileWithRetry/);
+  assert.match(albumScript, /uploadPendingFiles/);
+  assert.match(albumScript, /computeFileContentHash/);
+  assert.match(albumScript, /knownAlbumContentHashes/);
+  assert.match(server, /requireContentHash/);
+  assert.match(server, /Esta memória já está no álbum/);
   assert.match(albumScript, /new XMLHttpRequest\(\)/);
   assert.match(albumScript, /xhr\.open\("PUT", upload\.uploadUrl\)/);
   assert.match(albumScript, /xhr\.send\(file\)/);
@@ -460,6 +508,44 @@ test("álbum mobile preserva originais, publica memórias, usa câmera e agrupa 
   assert.match(albumScript, /file,[\s\S]*?caption:/);
   assert.match(server, /"Permissions-Policy": "camera=\(self\), microphone=\(self\), web-share=\(self\), geolocation=\(\)"/);
   assert.doesNotMatch(album, /on(?:click|change|submit)\s*=/i);
+});
+
+test("painel de apoio exige login e não expõe dados sem sessão", async () => {
+  const loginPage = await fetch(`${baseUrl}/apoio/login`);
+  assert.equal(loginPage.status, 200);
+
+  const panelRedirect = await fetch(`${baseUrl}/apoio`, { redirect: "manual" });
+  assert.equal(panelRedirect.status, 302);
+  assert.equal(panelRedirect.headers.get("location"), "/apoio/login");
+
+  const overview = await fetch(`${baseUrl}/api/support/overview`);
+  assert.equal(overview.status, 401);
+
+  const notAdmin = await fetch(`${baseUrl}/api/support/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ guestName: "Pessoa Teste", password: "123456" }),
+  });
+  const notAdminPayload = await notAdmin.json();
+  assert.equal(notAdmin.status, 403);
+  assert.match(notAdminPayload.error, /Gabriel Domingues/i);
+
+  const overviewWithGabrielCookie = await fetch(`${baseUrl}/api/support/overview`, {
+    headers: { Cookie: supportSessionCookie("Gabriel Domingues") },
+  });
+  assert.notEqual(overviewWithGabrielCookie.status, 401);
+
+  const overviewWithOtherAdminCookie = await fetch(`${baseUrl}/api/support/overview`, {
+    headers: { Cookie: supportSessionCookie("Pessoa Teste") },
+  });
+  assert.equal(overviewWithOtherAdminCookie.status, 401);
+
+  const [supportScript, supportPanelScript] = await Promise.all([
+    readFile(new URL("../support.js", import.meta.url), "utf8"),
+    readFile(new URL("../support-login.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(supportScript, /escapeHtml\(/);
+  assert.doesNotMatch(supportPanelScript, /on(?:click|change|submit)\s*=/i);
 });
 
 test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", async () => {

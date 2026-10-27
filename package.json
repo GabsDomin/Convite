@@ -10,7 +10,7 @@
     "setup:drive": "node scripts/setup-google-drive.mjs"
   },
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1091.0",

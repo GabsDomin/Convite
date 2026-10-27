@@ -8,6 +8,11 @@ const weddingAudio = document.querySelector("#wedding-audio");
 const musicToggle = document.querySelector("[data-music-toggle]");
 const audioStartTime = 0;
 const rsvpStorageKey = "gabriel-halanaia-rsvp";
+const maxGiftMessageLength = 5000;
+const minOpenGiftAmount = 1;
+const maxOpenGiftAmount = 1_000_000;
+const defaultHeroCopy =
+  "Com alegria, convidamos você para celebrar conosco esse momento tão especial. Sua presença fará parte da nossa história.";
 let audioStarted = false;
 let audioBlocked = false;
 let audioPausedByVisibility = false;
@@ -79,6 +84,7 @@ let gifts = [
   { id: "microondas", type: "fixed", section: "special", name: "Micro-ondas", value: 750, category: "Eletrodoméstico", text: "Um item essencial para o nosso dia a dia.", status: "available" },
   { id: "purificador", type: "fixed", section: "special", name: "Purificador de água", value: 800, category: "Cozinha", text: "Para termos água filtrada sempre à mão.", status: "available" },
   { id: "panelas-premium", type: "fixed", section: "special", name: "Jogo de panelas premium", value: 900, category: "Cozinha", text: "Para completar nossa cozinha com qualidade.", status: "available" },
+  { id: "contribuicao-livre", type: "open", section: "quotas", name: "Contribua com o valor que quiser", category: "Cota da casa", text: "Presenteie com o valor que fizer sentido para você — quantas vezes quiser, cada gesto nos ajuda a montar nosso cantinho com carinho.", imageUrl: "https://lyuqvwrikfajmcodwous.supabase.co/storage/v1/object/public/gift-images/QuandoQuiser.png", status: "available" },
   { id: "geladeira", type: "quota", section: "quotas", name: "Cota da geladeira", goal: 5500, options: [150, 250, 500, 1000], text: "Para nos ajudar em um dos principais itens da casa nova.", status: "available" },
   { id: "cota-maquina-de-lavar", type: "quota", section: "quotas", name: "Cota da máquina de lavar", goal: 1600, contributed: 0, options: [150, 250, 500, 1000], text: "Para facilitar nossa rotina com as roupas.", status: "available" },
   { id: "sofa", type: "quota", section: "quotas", name: "Cota do sofá", goal: 2500, options: [150, 250, 500, 1000], text: "Para montar nossa sala com conforto.", status: "available" },
@@ -102,10 +108,25 @@ const filters = [
   { id: "under-200", label: "Até R$ 200", match: (gift) => gift.type === "fixed" && gift.value <= 200 },
   { id: "200-500", label: "R$ 200 a R$ 500", match: (gift) => gift.type === "fixed" && gift.value > 200 && gift.value <= 500 },
   { id: "500-1000", label: "R$ 500 a R$ 1.000", match: (gift) => gift.type === "fixed" && gift.value > 500 && gift.value <= 1000 },
-  { id: "quotas", label: "Cotas da casa", match: (gift) => gift.type === "quota" },
+  { id: "quotas", label: "Cotas da casa", match: (gift) => gift.type === "quota" || gift.type === "open" },
+  { id: "open", label: "Valor livre", match: (gift) => gift.type === "open" },
 ];
 
 let activeFilter = "all";
+
+function resolveGiftFormAmount(gift, formData) {
+  if (gift?.type === "quota") return Number(formData.get("quotaValue") || 0);
+  if (gift?.type === "open") return Number(formData.get("openValue") || 0);
+  return Number(gift?.value || 0);
+}
+
+function validateOpenGiftAmount(amount) {
+  if (!Number.isSafeInteger(amount) || amount < minOpenGiftAmount || amount > maxOpenGiftAmount) {
+    showError(`Informe um valor entre ${formatCurrency(minOpenGiftAmount)} e ${formatCurrency(maxOpenGiftAmount)}.`);
+    return false;
+  }
+  return true;
+}
 
 function formatCurrency(value) {
   return new Intl.NumberFormat("pt-BR", {
@@ -162,6 +183,7 @@ function renderGiftDescription(gift) {
 
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     ...options,
   });
@@ -251,6 +273,111 @@ function getKnownGuestName() {
   return savedName && hasFullGuestName(savedName) ? savedName : "";
 }
 
+const engagementSessionStorageKey = "gab-naia-engagement-session";
+const trackedEngagementEvents = new Set();
+
+function getEngagementSessionKey() {
+  try {
+    let key = sessionStorage.getItem(engagementSessionStorageKey);
+    if (!key) {
+      key = crypto.randomUUID();
+      sessionStorage.setItem(engagementSessionStorageKey, key);
+    }
+    return key;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+function trackSiteEngagement(eventType, giftId = null) {
+  const dedupeKey = giftId ? `${eventType}:${giftId}:${getKnownGuestName() || ""}` : `${eventType}:${getKnownGuestName() || ""}`;
+  if (trackedEngagementEvents.has(dedupeKey)) return;
+  trackedEngagementEvents.add(dedupeKey);
+
+  const payload = {
+    eventType,
+    sessionKey: getEngagementSessionKey(),
+    guestName: getKnownGuestName() || null,
+    ...(giftId ? { giftId } : {}),
+  };
+
+  fetch("/api/engagement", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+function setupGiftsEngagementTracking() {
+  const giftsSection = document.querySelector("#presentes");
+  if (!giftsSection || typeof IntersectionObserver !== "function") return;
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      trackSiteEngagement("gifts_area_view");
+      observer.disconnect();
+    },
+    { threshold: 0.25 },
+  );
+  observer.observe(giftsSection);
+}
+
+const albumPublicOpenAtMs = Date.parse("2026-11-28T15:00:00-03:00");
+
+function normalizeAlbumGuestName(name) {
+  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isAlbumEarlyAccessGuest(name) {
+  return normalizeAlbumGuestName(name) === "gabriel domingues";
+}
+
+function isAlbumPubliclyOpen(now = Date.now()) {
+  return now >= albumPublicOpenAtMs;
+}
+
+async function setupAlbumEntryButton() {
+  const button = document.querySelector("[data-album-entry]");
+  const note = document.querySelector("[data-album-entry-note]");
+  if (!button) return;
+
+  let albumPublicOpen = isAlbumPubliclyOpen();
+  try {
+    const config = await loadPaymentConfig();
+    if (typeof config.albumPublicOpen === "boolean") {
+      albumPublicOpen = config.albumPublicOpen;
+    }
+  } catch (error) {
+    /* mantém horário local */
+  }
+
+  const earlyAccess = isAlbumEarlyAccessGuest(getKnownGuestName());
+  if (!albumPublicOpen && !earlyAccess) {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+    });
+    if (note) note.hidden = false;
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.className = "button primary";
+  link.href = "/album";
+  link.textContent = button.textContent.trim();
+  button.replaceWith(link);
+
+  if (note) {
+    if (earlyAccess && !albumPublicOpen) {
+      note.textContent = "Você tem acesso antecipado ao álbum.";
+      note.hidden = false;
+    } else {
+      note.hidden = true;
+    }
+  }
+}
+
 function saveRsvp(name, partySize, additionalGuestNames = []) {
   const guestName = name.trim().replace(/\s+/g, " ");
   if (!guestName) return;
@@ -266,19 +393,109 @@ function saveRsvp(name, partySize, additionalGuestNames = []) {
   );
 }
 
+function clearSavedRsvp() {
+  localStorage.removeItem(rsvpStorageKey);
+}
+
+function resetRsvpHeroState() {
+  const heroCopy = document.querySelector(".hero-copy");
+  const heroActions = document.querySelector(".hero-actions");
+  const adjustButton = document.querySelector("[data-open-rsvp-adjust]");
+  const detailsButton = document.querySelector("[data-scroll-details]");
+
+  if (heroCopy) {
+    heroCopy.textContent = defaultHeroCopy;
+    heroCopy.classList.remove("confirmed");
+  }
+  heroActions?.classList.remove("is-rsvp-confirmed");
+  adjustButton?.setAttribute("hidden", "");
+  if (detailsButton) detailsButton.hidden = true;
+}
+
+function rsvpFromApiRow(row, fallbackGuestNames = []) {
+  if (!row?.guest_name) return null;
+  // O servidor omite acompanhantes para aparelhos que não fizeram a confirmação.
+  return {
+    name: row.guest_name,
+    partySize: row.party_size,
+    additionalGuestNames: Array.isArray(row.additional_guest_names) ? row.additional_guest_names : fallbackGuestNames,
+  };
+}
+
+function isRsvpLookupNotFound(error) {
+  const message = String(error?.message || "");
+  return /confirmação não encontrada|não encontrad/i.test(message);
+}
+
+async function restoreRsvpFromRememberCookie() {
+  if (getSavedRsvp()?.name) return;
+
+  try {
+    const remote = await requestJson("/api/rsvp/session");
+    if (!remote?.authenticated) return;
+    const synced = rsvpFromApiRow(remote?.rsvp);
+    if (!synced) return;
+    saveRsvp(synced.name, synced.partySize, synced.additionalGuestNames);
+  } catch {
+    /* cookie ausente ou inválido */
+  }
+}
+
+async function syncSavedRsvpFromServer() {
+  const savedRsvp = getSavedRsvp();
+  if (!savedRsvp?.name) return;
+
+  try {
+    const remote = await requestJson("/api/rsvp/lookup", {
+      method: "POST",
+      body: JSON.stringify({ guestName: savedRsvp.name }),
+    });
+    const synced = rsvpFromApiRow(remote?.rsvp, savedRsvp.additionalGuestNames);
+    if (!synced) {
+      clearSavedRsvp();
+      resetRsvpHeroState();
+      return;
+    }
+    saveRsvp(synced.name, synced.partySize, synced.additionalGuestNames);
+  } catch (error) {
+    if (isRsvpLookupNotFound(error)) {
+      clearSavedRsvp();
+      resetRsvpHeroState();
+    }
+  }
+}
+
+async function initRsvpHeroState() {
+  await restoreRsvpFromRememberCookie();
+  if (!getSavedRsvp()?.name) return;
+  await syncSavedRsvpFromServer();
+  if (getSavedRsvp()?.name) renderRsvpState();
+}
+
+function formatSavedRsvpNames(savedRsvp) {
+  const extras = Array.isArray(savedRsvp?.additionalGuestNames) ? savedRsvp.additionalGuestNames : [];
+  if (!extras.length) return savedRsvp?.name || "";
+  return [savedRsvp.name, ...extras].join(" · ");
+}
+
 function renderRsvpState() {
   const savedRsvp = getSavedRsvp();
   const heroCopy = document.querySelector(".hero-copy");
   const heroActions = document.querySelector(".hero-actions");
   const rsvpButton = document.querySelector("[data-open-rsvp]");
+  const adjustButton = document.querySelector("[data-open-rsvp-adjust]");
   const detailsButton = document.querySelector("[data-scroll-details]");
 
   if (!heroCopy || !rsvpButton || !savedRsvp?.name) return;
 
-  heroCopy.textContent = `Olá, ${savedRsvp.name}! Sua presença já foi confirmada. Que alegria ter você conosco! Confira os detalhes da cerimônia e, se desejar, nossa lista de presentes.`;
+  const guestList = formatSavedRsvpNames(savedRsvp);
+  const companionsNote = guestList !== savedRsvp.name
+    ? ` Confirmamos: ${guestList}.`
+    : "";
+  heroCopy.textContent = `Olá, ${savedRsvp.name}! Sua presença já foi confirmada.${companionsNote} Se esqueceu de incluir alguém, use “Ajustar confirmação”. Confira os detalhes da cerimônia e, se desejar, nossa lista de presentes.`;
   heroCopy.classList.add("confirmed");
   heroActions?.classList.add("is-rsvp-confirmed");
-  rsvpButton.remove();
+  adjustButton?.removeAttribute("hidden");
   if (detailsButton) detailsButton.hidden = false;
 }
 
@@ -478,6 +695,7 @@ async function loadGifts() {
       gifts = payload.gifts.map(normalizeGiftForUi);
       lastGiftLoadAt = Date.now();
       renderGifts();
+      trackSiteEngagement("gifts_list_opened");
       return;
     }
 
@@ -514,27 +732,35 @@ function normalizeGiftForUi(gift) {
 }
 
 function renderGiftCard(gift) {
+  const isOpen = gift.type === "open";
   const reserved = gift.status === "reserved";
   const contributed = Number.isFinite(Number(gift.contributed)) ? Number(gift.contributed) : 0;
-  const valueText = gift.type === "quota" ? `Meta: ${formatCurrency(gift.goal)}` : formatCurrency(gift.value);
-  const buttonText = gift.type === "quota" ? "Contribuir" : "Presentear";
+  const valueText = isOpen
+    ? "Valor livre"
+    : gift.type === "quota"
+      ? `Meta: ${formatCurrency(gift.goal)}`
+      : formatCurrency(gift.value);
+  const buttonText = gift.type === "quota" || isOpen ? "Contribuir" : "Presentear";
   const displayContributed = gift.type === "quota" && reserved ? Math.max(contributed, gift.goal) : contributed;
   const progressValue = gift.goal > 0 ? Math.min(100, Math.round((displayContributed / gift.goal) * 100)) : 0;
   const quotaCompleted = gift.type === "quota" && progressValue >= 100;
-  const showReserved = gift.type === "quota" ? quotaCompleted : reserved;
+  const showReserved = gift.type === "quota" ? quotaCompleted : isOpen ? false : reserved;
   const showActionButton = gift.type === "quota" ? !quotaCompleted : true;
 
   return `
-    <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""} ${gift.imageUrl ? "has-image" : ""}">
+    <article class="gift-card ${gift.type === "quota" ? "quota-card" : ""} ${isOpen ? "open-card" : ""} ${gift.imageUrl ? "has-image" : ""}">
       <div class="gift-icon">${giftIcon()}</div>
       ${renderGiftImage(gift)}
       <div class="gift-card-main">
-        <span class="gift-category">${gift.type === "quota" ? "Cota da casa" : escapeHtml(gift.category)}</span>
+        <span class="gift-category">${isOpen ? "Contribuição livre" : gift.type === "quota" ? "Cota da casa" : escapeHtml(gift.category)}</span>
         <h4>${escapeHtml(gift.name)}</h4>
         <p class="gift-price">${valueText}</p>
         ${gift.imageUrl ? "" : renderGiftDescription(gift)}
       </div>
       ${gift.imageUrl ? renderGiftDescription(gift) : ""}
+      ${isOpen && contributed > 0 ? `
+        <p class="gift-open-total">${formatCurrency(contributed)} já contribuídos com carinho</p>
+      ` : ""}
       ${gift.type === "quota" && gift.options.length ? `
         <div class="quota-progress ${quotaCompleted ? "completed" : ""}" aria-label="Progresso da cota de ${escapeAttribute(gift.name)}">
           <div class="quota-progress-text">
@@ -551,7 +777,7 @@ function renderGiftCard(gift) {
         </div>
       ` : ""}
       <div class="gift-footer">
-        <span class="badge ${showReserved ? "reserved" : "available"}">${showReserved ? "Reservado" : "Disponível"}</span>
+        <span class="badge available">${isOpen ? "Sempre disponível" : showReserved ? "Reservado" : "Disponível"}</span>
         ${showActionButton ? `
           <button class="button ${reserved ? "secondary" : "primary"}" data-gift-id="${escapeAttribute(gift.id)}" ${reserved ? "disabled" : ""}>
             ${reserved ? "Já escolhido" : buttonText}
@@ -663,11 +889,13 @@ function restoreRsvpDraft(form, draft) {
   form.querySelector('[name="guestName"]')?.focus();
 }
 
-function showGuestNotInvited(draft = null) {
+function showGuestNotInvited(draft = null, message = "") {
+  const copy = String(message || "").trim()
+    || "Infelizmente, este nome não está na lista de convidados.";
   if (draft) {
     showRsvpIssue({
       title: "Lista de convidados",
-      message: "Infelizmente, seu nome não está na lista de convidados.",
+      message: copy,
       draft,
     });
     return;
@@ -678,7 +906,7 @@ function showGuestNotInvited(draft = null) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
     </div>
     <h2 id="modal-title">Lista de convidados</h2>
-    <p>Infelizmente, seu nome não está na lista de convidados.</p>
+    <p>${escapeHtml(copy)}</p>
     <div class="modal-actions">
       <button class="button primary" data-close-modal>Fechar</button>
     </div>
@@ -848,6 +1076,13 @@ function rsvpWizardContinue(form) {
     const includePartner = form.querySelector("[data-rsvp-include-partner]")?.checked;
     const includeChildren = form.querySelector("[data-rsvp-include-children]")?.checked;
     if (!includePartner && !includeChildren) {
+      if (form.dataset.rsvpMode === "adjust") {
+        showRsvpError(
+          "Marque parceiro(a) ou filho(s) para incluir alguém. Se não precisa alterar, feche esta janela.",
+          captureRsvpDraft(form),
+        );
+        return;
+      }
       form.requestSubmit();
       return;
     }
@@ -880,6 +1115,9 @@ function buildRsvpPayload(formData) {
     if (additionalGuestNames.some((name) => !hasFullGuestName(name))) {
       return { error: "Informe nome e sobrenome de cada pessoa." };
     }
+    if (includeChildren) {
+      return { guestName, partySize: "Família", additionalGuestNames };
+    }
     return { guestName, partySize: "Casal", additionalGuestNames };
   }
 
@@ -896,20 +1134,89 @@ function buildRsvpPayload(formData) {
   return { guestName, partySize: "Somente eu", additionalGuestNames: [] };
 }
 
-function openRsvpModal(restoreDraft = null) {
+function buildRsvpDraftFromSaved(savedRsvp) {
+  const additionalGuestNames = Array.isArray(savedRsvp.additionalGuestNames)
+    ? savedRsvp.additionalGuestNames
+    : [];
+  const draft = {
+    step: 2,
+    guestName: savedRsvp.name || "",
+    includePartner: false,
+    includeChildren: false,
+    partnerName: "",
+    childrenNames: [],
+  };
+
+  if (savedRsvp.partySize === "Família") {
+    draft.includePartner = true;
+    draft.includeChildren = true;
+    draft.partnerName = additionalGuestNames[0] || "";
+    draft.childrenNames = additionalGuestNames.length > 1
+      ? additionalGuestNames.slice(1)
+      : [""];
+  } else if (savedRsvp.partySize === "Casal") {
+    draft.includePartner = true;
+    draft.partnerName = additionalGuestNames[0] || "";
+  } else if (savedRsvp.partySize === "Responsável e menores") {
+    draft.includeChildren = true;
+    draft.childrenNames = additionalGuestNames.length ? [...additionalGuestNames] : [""];
+  }
+
+  return draft;
+}
+
+function openRsvpAdjustModal() {
+  openRsvpAdjustModalAsync().catch(() => openRsvpModal());
+}
+
+async function openRsvpAdjustModalAsync() {
+  const savedRsvp = getSavedRsvp();
+  if (!savedRsvp?.name) {
+    openRsvpModal();
+    return;
+  }
+
+  let synced = savedRsvp;
+  try {
+    const remote = await requestJson("/api/rsvp/lookup", {
+      method: "POST",
+      body: JSON.stringify({ guestName: savedRsvp.name }),
+    });
+    const fromApi = rsvpFromApiRow(remote?.rsvp, savedRsvp.additionalGuestNames);
+    if (fromApi) {
+      synced = fromApi;
+      saveRsvp(synced.name, synced.partySize, synced.additionalGuestNames);
+    }
+  } catch (error) {
+    if (isRsvpLookupNotFound(error)) {
+      clearSavedRsvp();
+      resetRsvpHeroState();
+      setupAlbumEntryButton();
+      openRsvpModal();
+      return;
+    }
+  }
+
+  openRsvpModal(buildRsvpDraftFromSaved(synced), { adjust: true });
+}
+
+function openRsvpModal(restoreDraft = null, options = {}) {
+  const isAdjust = Boolean(options.adjust);
   openModal(`
     <div class="modal-icon">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" />
       </svg>
     </div>
-    <h2 id="modal-title">Confirmar presença</h2>
-    <p class="rsvp-intro">Que alegria saber que você vem! Cada casal pode confirmar pelo par, e cada pai ou mãe pode confirmar pelo filho.</p>
-    <form data-rsvp-form data-rsvp-step="1">
+    <h2 id="modal-title">${isAdjust ? "Ajustar confirmação" : "Confirmar presença"}</h2>
+    <p class="rsvp-intro">${isAdjust
+    ? "Inclua ou corrija quem vem com você. Use o mesmo nome da confirmação original."
+    : "Que alegria saber que você vem! Cada casal pode confirmar pelo par, e cada pai ou mãe pode confirmar pelo filho."}</p>
+    <form data-rsvp-form data-rsvp-step="1"${isAdjust ? ' data-rsvp-mode="adjust"' : ""}>
       <div class="rsvp-progress" aria-hidden="true">
         <span class="is-active" data-rsvp-progress="1">1. Você</span>
-        <span data-rsvp-progress="2">2. Acompanhantes</span>
-        <span data-rsvp-progress="3">3. Confirmar</span>
+        <span data-rsvp-progress="2">2. Quem vem</span>
+        <span data-rsvp-progress="3">3. Revisar</span>
       </div>
 
       <section class="rsvp-step" data-rsvp-step="1">
@@ -929,13 +1236,13 @@ function openRsvpModal(restoreDraft = null) {
             <input type="checkbox" name="includePartner" data-rsvp-include-partner />
             <span class="rsvp-option-icon" aria-hidden="true">♡</span>
             <strong>Parceiro(a)</strong>
-            <small>Confirmo também pelo meu(minha) companheiro(a)</small>
+            <small>Incluir meu(minha) companheiro(a) na confirmação</small>
           </label>
           <label class="rsvp-option-card">
             <input type="checkbox" name="includeChildren" data-rsvp-include-children />
             <span class="rsvp-option-icon" aria-hidden="true">✦</span>
             <strong>Filho(s)</strong>
-            <small>Vou levar criança(s) da família</small>
+            <small>Incluir filho(s) na confirmação</small>
           </label>
         </div>
       </section>
@@ -960,7 +1267,7 @@ function openRsvpModal(restoreDraft = null) {
         <button class="button secondary" type="button" data-rsvp-back hidden>Voltar</button>
         <button class="button secondary" type="button" data-rsvp-cancel data-close-modal>Cancelar</button>
         <button class="button primary" type="button" data-rsvp-next>Continuar</button>
-        <button class="button primary" type="submit" data-rsvp-submit hidden>Confirmar presença</button>
+        <button class="button primary" type="submit" data-rsvp-submit hidden>${isAdjust ? "Salvar ajuste" : "Confirmar presença"}</button>
       </div>
     </form>
   `);
@@ -969,18 +1276,31 @@ function openRsvpModal(restoreDraft = null) {
   if (!form) return;
   if (restoreDraft) restoreRsvpDraft(form, restoreDraft);
   else rsvpWizardSetStep(form, 1);
+
+  if (isAdjust) {
+    const nameInput = form.querySelector('[name="guestName"]');
+    if (nameInput) nameInput.readOnly = true;
+  }
 }
 
 function openGiftModal(gift) {
+  trackSiteEngagement("gift_modal_opened", gift.id);
   const isQuota = gift.type === "quota";
+  const isOpen = gift.type === "open";
   const hasOnlinePayment = hasOnlinePaymentConfigured();
   const giftName = escapeHtml(gift.name);
   const knownGuestName = getKnownGuestName();
+  const modalTitle = isQuota || isOpen ? "Contribuir" : "Escolher presente";
+  const modalLead = isOpen
+    ? `Informe seu nome e o valor que deseja presentear para: <strong>${giftName}</strong>.`
+    : isQuota
+      ? `Escolha uma cota, informe seu nome e sobrenome e siga com a forma de pagamento que preferir para: <strong>${giftName}</strong>.`
+      : `Informe seu nome e sobrenome e escolha como deseja presentear: <strong>${giftName}</strong>.`;
 
   openModal(`
     <div class="modal-icon">${giftIcon()}</div>
-    <h2 id="modal-title">${isQuota ? "Contribuir com cota" : "Escolher presente"}</h2>
-    <p>${isQuota ? `Escolha uma cota, informe seu nome e sobrenome e siga com a forma de pagamento que preferir para: <strong>${giftName}</strong>.` : `Informe seu nome e sobrenome e escolha como deseja presentear: <strong>${giftName}</strong>.`}</p>
+    <h2 id="modal-title">${modalTitle}</h2>
+    <p>${modalLead}</p>
     <form data-gift-form="${escapeAttribute(gift.id)}">
       <label>
         Seu nome e sobrenome
@@ -992,7 +1312,7 @@ function openGiftModal(gift) {
       </label>
       <label>
         Mensagem para os noivos <span class="optional-label">opcional</span>
-        <textarea name="message" rows="3" placeholder="Escreva uma mensagem com carinho"></textarea>
+        <textarea name="message" rows="4" maxlength="5000" placeholder="Escreva uma mensagem com carinho"></textarea>
       </label>
       ${isQuota ? `
         <label>
@@ -1000,6 +1320,11 @@ function openGiftModal(gift) {
           <select name="quotaValue" required>
             ${gift.options.map((option) => `<option value="${option}">${formatCurrency(option)}</option>`).join("")}
           </select>
+        </label>
+      ` : isOpen ? `
+        <label>
+          Valor do presente
+          <input name="openValue" type="number" min="${minOpenGiftAmount}" max="${maxOpenGiftAmount}" step="1" required placeholder="Ex.: 150" inputmode="numeric" />
         </label>
       ` : `
         <p class="modal-value">Valor do presente: <strong>${formatCurrency(gift.value)}</strong></p>
@@ -1027,7 +1352,7 @@ function openGiftModal(gift) {
 
   if (knownGuestName) {
     const form = modalContent.querySelector("[data-gift-form]");
-    const nextFocus = form?.querySelector('input[name="buyerEmail"], select[name="quotaValue"], textarea[name="message"], button[data-payment-method]');
+    const nextFocus = form?.querySelector('input[name="buyerEmail"], input[name="openValue"], select[name="quotaValue"], textarea[name="message"], button[data-payment-method]');
     nextFocus?.focus();
   }
 }
@@ -1070,6 +1395,11 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (event.target.matches("[data-open-rsvp-adjust]")) {
+    openRsvpAdjustModal();
+    return;
+  }
+
   const rsvpNextButton = event.target.closest("[data-rsvp-next]");
   if (rsvpNextButton) {
     const form = rsvpNextButton.closest("[data-rsvp-form]");
@@ -1104,6 +1434,7 @@ document.addEventListener("click", async (event) => {
 
   if (event.target.matches("[data-scroll-gifts]")) {
     document.querySelector("#presentes").scrollIntoView({ behavior: "smooth" });
+    trackSiteEngagement("gifts_area_view");
     return;
   }
 
@@ -1158,22 +1489,40 @@ document.addEventListener("submit", async (event) => {
     }
 
     const { guestName, partySize, additionalGuestNames } = payload;
+    const isAdjust = rsvpForm.dataset.rsvpMode === "adjust";
 
     try {
       const result = await requestJson("/api/rsvp", {
         method: "POST",
         body: JSON.stringify({ guestName, partySize, additionalGuestNames }),
       });
-      saveRsvp(guestName, partySize, additionalGuestNames);
+      const savedRow = result.rsvp;
+      saveRsvp(
+        savedRow?.guest_name || guestName,
+        savedRow?.party_size || partySize,
+        Array.isArray(savedRow?.additional_guest_names)
+          ? savedRow.additional_guest_names
+          : additionalGuestNames,
+      );
       renderRsvpState();
+      setupAlbumEntryButton();
       rsvpDraft = null;
+      const savedNames = formatSavedRsvpNames(getSavedRsvp());
       if (result.alreadyConfirmed) {
-        showSuccess("Sua presença já estava confirmada. Que alegria ter você conosco!");
+        showSuccess(isAdjust
+          ? "Nada mudou: sua confirmação já estava assim."
+          : "Sua presença já estava confirmada. Que alegria ter você conosco!");
+      } else if (isAdjust) {
+        showSuccess(savedNames.includes(" · ")
+          ? `Confirmação atualizada: ${savedNames}.`
+          : "Confirmação atualizada com sucesso.");
       } else {
-        showSuccess(`${additionalGuestNames.length ? "Presenças confirmadas" : "Presença confirmada"} com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.`);
+        showSuccess(savedNames.includes(" · ")
+          ? `Presença confirmada para ${savedNames}.`
+          : `${additionalGuestNames.length ? "Presenças confirmadas" : "Presença confirmada"} com sucesso. Quando você voltar ao convite, vamos lembrar da sua confirmação.`);
       }
     } catch (error) {
-      if (error.code === "guest_not_invited") showGuestNotInvited(draft);
+      if (error.code === "guest_not_invited") showGuestNotInvited(draft, error.message);
       else showRsvpError(error.message, draft);
     }
   }
@@ -1186,10 +1535,21 @@ document.addEventListener("submit", async (event) => {
     const buyerEmail = String(formData.get("buyerEmail") || "");
     const message = String(formData.get("message") || "");
     const quotaValue = Number(formData.get("quotaValue") || 0);
+    const openValue = Number(formData.get("openValue") || 0);
     const paymentMethod = String(formData.get("paymentMethod") || "in_person") === "online" ? "online" : "in_person";
+    const giftAmount = resolveGiftFormAmount(gift, formData);
 
     if (!hasFullGuestName(guestName)) {
       showError("Informe seu nome e sobrenome.");
+      return;
+    }
+
+    if (gift?.type === "open" && !validateOpenGiftAmount(giftAmount)) {
+      return;
+    }
+
+    if (paymentMethod === "online" && message.length > maxGiftMessageLength) {
+      showError(`A mensagem pode ter no máximo ${maxGiftMessageLength} caracteres.`);
       return;
     }
 
@@ -1204,7 +1564,7 @@ document.addEventListener("submit", async (event) => {
           method: "POST",
           body: JSON.stringify({
             giftId: gift?.id,
-            amount: gift?.type === "quota" ? quotaValue : gift?.value,
+            amount: gift?.type === "quota" ? quotaValue : gift?.type === "open" ? openValue : gift?.value,
             buyerName: guestName,
             buyerEmail,
             message,
@@ -1226,16 +1586,22 @@ document.addEventListener("submit", async (event) => {
         body: JSON.stringify({
           giftId: gift?.id,
           guestName,
-          amount: gift?.type === "quota" ? quotaValue : undefined,
+          amount: gift?.type === "quota" || gift?.type === "open" ? giftAmount : undefined,
         }),
       });
 
       if (gift && gift.type === "fixed") {
         gift.status = "reserved";
         renderGifts();
+      } else if (gift && (gift.type === "quota" || gift.type === "open")) {
+        gift.contributed = (Number(gift.contributed) || 0) + giftAmount;
+        if (gift.type === "quota" && gift.goal > 0 && gift.contributed >= gift.goal) {
+          gift.status = "reserved";
+        }
+        renderGifts();
       }
 
-      showSuccess(gift?.type === "quota" ? "Sua contribuição foi registrada para os noivos." : "Seu presente foi registrado para os noivos.");
+      showSuccess(gift?.type === "quota" || gift?.type === "open" ? "Sua contribuição foi registrada para os noivos." : "Seu presente foi registrado para os noivos.");
     } catch (error) {
       showError(error.message);
     }
@@ -1271,7 +1637,10 @@ if (useLocalGiftFallback) {
 } else {
   renderGiftMessage("Carregando lista...", "Buscando os presentes cadastrados no Supabase.");
 }
-renderRsvpState();
+initRsvpHeroState().then(() => {
+  setupAlbumEntryButton();
+  if (!useLocalGiftFallback) setupGiftsEngagementTracking();
+});
 syncMusicButton();
 startWeddingAudio({ unmute: true, allowMutedFallback: false });
 

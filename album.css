@@ -916,6 +916,20 @@ dialog::backdrop {
   font-weight: 750;
 }
 
+.upload-user {
+  margin: 0 0 0.85rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(0, 63, 152, 0.14);
+  border-radius: 10px;
+  color: var(--royal-dark);
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 0.86rem;
+}
+
+.upload-user strong {
+  color: var(--royal);
+}
+
 .upload-form > label[hidden] {
   display: none !important;
 }
@@ -1556,8 +1570,12 @@ dialog::backdrop {
 }
 
 .lightbox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   width: min(calc(100% - 2rem), 1040px);
   max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   border-radius: 16px;
   overflow: hidden;
   color: white;
@@ -1576,52 +1594,75 @@ dialog::backdrop {
 
 .lightbox-media {
   display: grid;
+  flex: 1 1 auto;
   place-items: center;
-  min-height: 420px;
-  max-height: calc(100vh - 9rem);
+  min-height: min(240px, 38vh);
+  max-height: min(calc(100dvh - 14rem), calc(100vh - 14rem));
+  overflow: hidden;
   background: #030912;
 }
 
 .lightbox-media img,
 .lightbox-media video {
   display: block;
+  width: auto;
+  height: auto;
   max-width: 100%;
-  max-height: calc(100vh - 9rem);
+  max-height: min(calc(100dvh - 14rem), calc(100vh - 14rem));
   object-fit: contain;
 }
 
 .lightbox-footer {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 0.85rem;
-  padding: 0.85rem 1.1rem 1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem;
+  flex-shrink: 0;
+  padding: 0.7rem 0.85rem max(0.85rem, env(safe-area-inset-bottom));
   background: rgba(3, 9, 18, 0.96);
 }
 
 .lightbox-actions {
   display: flex;
-  flex: 0 0 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 0.55rem;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
 }
 
 .lightbox-caption {
   padding: 0;
-  flex: 1;
+  width: 100%;
   min-width: 0;
   color: rgba(255, 255, 255, 0.82);
+  font-size: 0.86rem;
+  line-height: 1.45;
 }
 
 .lightbox-caption strong {
   color: white;
 }
 
-.lightbox-download,
-.lightbox-delete {
-  flex: 0 0 auto;
+.lightbox-actions .button.compact.lightbox-download,
+.lightbox-actions .button.compact.lightbox-delete {
+  flex: 0 1 auto;
+  min-height: 2rem;
+  padding: 0.35rem 0.62rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.15;
   white-space: nowrap;
+  box-shadow: none;
+  transform: none;
+}
+
+.lightbox-actions .button.compact.lightbox-download:hover,
+.lightbox-actions .button.compact.lightbox-delete:hover {
+  transform: none;
+}
+
+.button.danger.lightbox-delete {
+  box-shadow: none;
 }
 
 .button.danger {
@@ -2195,6 +2236,31 @@ dialog::backdrop {
 
   .lightbox {
     width: calc(100% - 1rem);
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .lightbox-footer {
+    gap: 0.65rem;
+    padding-inline: 0.75rem;
+  }
+
+  .lightbox-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.45rem;
+  }
+
+  .lightbox-actions .button[hidden] {
+    display: none;
+  }
+
+  .lightbox-actions .button.compact {
+    flex: 0 1 auto;
+    max-width: calc(50% - 0.25rem);
+    min-height: 2.05rem;
+    padding: 0.32rem 0.45rem;
+    font-size: 0.72rem;
   }
 
   .story-viewer {

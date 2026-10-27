@@ -19,7 +19,7 @@
     />
     <link rel="icon" type="image/png" href="assets/favicon.png" />
     <link rel="apple-touch-icon" href="assets/favicon.png" />
-    <link rel="stylesheet" href="styles.css?v=20260720-4" />
+    <link rel="stylesheet" href="styles.css?v=20260722-17" />
   </head>
   <body>
     <main>
@@ -66,6 +66,7 @@
 
           <div class="hero-actions">
             <button class="button primary" data-open-rsvp>Confirmar presença</button>
+            <button class="button secondary" type="button" data-open-rsvp-adjust hidden>Ajustar confirmação</button>
             <button class="button primary" data-scroll-details hidden>Detalhes da cerimônia</button>
             <button class="button secondary" data-scroll-gifts>Ver lista de presentes</button>
           </div>
@@ -82,8 +83,11 @@
           <article class="info-card">
             <span class="card-icon">✦</span>
             <h3>Cerimônia</h3>
-            <strong>Horário a confirmar</strong>
-            <p>O horário será informado em breve. Reserve a data para viver conosco esse momento tão especial.</p>
+            <strong>18h</strong>
+            <p>
+              Pedimos que cheguem com antecedência: a recepção dos convidados começa às 17h20,
+              para que todos estejam acomodados antes do nosso “sim”.
+            </p>
           </article>
           <article class="info-card">
             <span class="card-icon">✦</span>
@@ -94,8 +98,8 @@
           <article class="info-card">
             <span class="card-icon">✦</span>
             <h3>Programação</h3>
-            <strong>Mais detalhes em breve</strong>
-            <p>Manteremos este convite atualizado com os horários e as orientações importantes para o grande dia.</p>
+            <strong>Recepção às 17h20</strong>
+            <p>Recepção a partir das 17h20, cerimônia às 18h e jantar em seguida. Contamos com sua pontualidade para vivermos juntos cada momento.</p>
           </article>
         </div>
         <a
@@ -129,11 +133,24 @@
         <div class="album-invitation-copy">
           <span class="eyebrow">Memórias compartilhadas</span>
           <h2 id="album-title">Nosso álbum coletivo</h2>
-          <p>
-            Um espaço para reunir os momentos registrados por cada convidado. No grande dia,
-            você poderá compartilhar suas fotos e vídeos e acompanhar as memórias publicadas por todos.
+          <p class="album-invitation-lead">
+            Um espaço para reunir fotos e vídeos de todos os convidados. No dia 28/11, a partir das 15h,
+            você poderá enviar suas memórias e acompanhar o que cada um registrou.
           </p>
-          <a class="button primary" href="/album">Conhecer o álbum coletivo</a>
+          <div class="album-entry">
+            <button
+              type="button"
+              class="button is-disabled"
+              data-album-entry
+              disabled
+              aria-disabled="true"
+            >
+              Conhecer o álbum coletivo
+            </button>
+            <p class="album-entry-note" data-album-entry-note>
+              O álbum será liberado no dia 28/11, às 15h.
+            </p>
+          </div>
         </div>
         <div class="album-collage" aria-hidden="true">
           <span class="album-frame album-frame-one">G &amp; H</span>
@@ -151,6 +168,18 @@
             nesse novo começo, preparamos uma lista de presentes simbólicos e cotas para a nossa
             casa nova. Escolha um presente, informe seu nome e decida se deseja presentear pessoalmente ou online.
           </p>
+          <aside class="gift-pix-note" aria-label="Uma dica sobre como presentear">
+            <p class="gift-pix-note__kicker">Uma dica com carinho</p>
+            <div class="gift-pix-note__divider" aria-hidden="true"><span></span><b>♥</b><span></span></div>
+            <p class="gift-pix-note__lead">
+              Para facilitar o nosso começo, <span class="gift-pix-note__highlight">Pix ou cartão</span> são as formas que mais nos ajudam a montar o nosso cantinho.
+            </p>
+            <p class="gift-pix-note__text">
+              Caso prefira nos presentear de outra maneira, pedimos apenas que converse conosco antes de fazer a reserva.
+              Assim, podemos organizar tudo juntos, com carinho e cuidado.
+            </p>
+            <p class="gift-pix-note__sign">Gabriel &amp; Halanaia</p>
+          </aside>
         </div>
         <div class="gift-filters" id="gift-filters" aria-label="Filtros da lista de presentes"></div>
         <div class="gift-sections" id="gift-grid"></div>
@@ -185,6 +214,6 @@
       <span>Mutar</span>
     </button>
 
-    <script src="script.js?v=20260721-2" defer></script>
+    <script src="script.js?v=20260725-5" defer></script>
   </body>
 </html>

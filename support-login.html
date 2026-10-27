@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Entrar | Painel de apoio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/png" href="/assets/favicon.png" />
+    <link rel="stylesheet" href="/support.css?v=7" />
+  </head>
+  <body class="support-login-page">
+    <main class="support-login-card">
+      <a class="support-back" href="/">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+        Voltar ao convite
+      </a>
+      <h1>Painel de apoio</h1>
+      <p>Acesso exclusivo do administrador (Gabriel Domingues). Use o mesmo nome e senha do álbum.</p>
+      <p class="support-login-error" data-support-login-error hidden role="alert" aria-live="assertive">
+        <strong data-support-login-error-title>Senha incorreta</strong>
+        <span data-support-login-error-text></span>
+      </p>
+      <form class="support-login-form" data-support-login-form novalidate>
+        <label data-support-name-field>
+          Seu nome
+          <input
+            name="guestName"
+            type="text"
+            maxlength="120"
+            autocomplete="name"
+            placeholder="Gabriel Domingues Fernandes"
+            required
+            data-support-name-input
+          />
+        </label>
+        <label>
+          Senha do álbum
+          <input
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            minlength="4"
+            maxlength="120"
+            required
+            data-support-password-input
+          />
+        </label>
+        <button class="support-btn support-btn-primary support-login-submit" type="submit" data-support-login-submit>
+          Entrar
+        </button>
+      </form>
+    </main>
+    <script src="/support-login.js?v=3" defer></script>
+  </body>
+</html>

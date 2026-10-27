@@ -49,6 +49,8 @@ const uploadProgressLabel = document.querySelector("[data-upload-progress-label]
 const uploadProgressValue = document.querySelector("[data-upload-progress-value]");
 const uploadProgressBar = document.querySelector("[data-upload-progress-bar]");
 const uploadSubmitButton = document.querySelector("[data-upload-submit]");
+const uploadUser = document.querySelector("[data-upload-user]");
+const uploadUserName = document.querySelector("[data-upload-user-name]");
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const allowedVideoTypes = new Set(["video/mp4", "video/quicktime", "video/webm"]);
@@ -58,6 +60,8 @@ const maximumAlbumFileSize = 500 * 1024 * 1024;
 const storyGroups = new Map();
 let activeFilter = "Todos";
 let albumIsAdmin = false;
+let albumSessionGuestName = "";
+const knownAlbumContentHashes = new Set();
 let activeLightboxMediaId = null;
 let activeStoryPerson = "";
 let activeStoryIndex = 0;
@@ -310,6 +314,31 @@ function validateFiles(files) {
 
 function getPendingFiles() {
   return [...Array.from(fileInput.files || []), ...capturedFiles];
+}
+
+function removePendingFile(file) {
+  const capturedIndex = capturedFiles.indexOf(file);
+  if (capturedIndex >= 0) {
+    capturedFiles.splice(capturedIndex, 1);
+    return;
+  }
+
+  const transfer = new DataTransfer();
+  Array.from(fileInput.files || []).forEach((item) => {
+    if (item !== file) transfer.items.add(item);
+  });
+  fileInput.files = transfer.files;
+}
+
+function updateUploadUserLabel() {
+  if (!uploadUser || !uploadUserName) return;
+  if (!albumSessionGuestName) {
+    uploadUser.hidden = true;
+    uploadUserName.textContent = "";
+    return;
+  }
+  uploadUser.hidden = false;
+  uploadUserName.textContent = albumSessionGuestName;
 }
 
 function renderSelectedFiles() {
@@ -811,7 +840,8 @@ function closeUploadDialog() {
 
 function openUploadDialog() {
   if (!uploadDialog.open) uploadDialog.showModal();
-  window.setTimeout(() => uploadForm.elements.guestName.focus(), 0);
+  updateUploadUserLabel();
+  window.setTimeout(() => uploadForm.elements.category?.focus(), 0);
 }
 
 let activeLightboxDownload = null;
@@ -826,12 +856,12 @@ function closeLightbox() {
   if (lightboxDownloadButton) {
     lightboxDownloadButton.hidden = true;
     lightboxDownloadButton.disabled = false;
-    lightboxDownloadButton.textContent = "Baixar original";
+    lightboxDownloadButton.textContent = "Baixar";
   }
   if (lightboxDeleteButton) {
     lightboxDeleteButton.hidden = true;
     lightboxDeleteButton.disabled = false;
-    lightboxDeleteButton.textContent = "Excluir memória";
+    lightboxDeleteButton.textContent = "Excluir";
   }
 }
 
@@ -926,12 +956,12 @@ function openLightbox({ url, type, guestName, category, originalUrl, mediaId }) 
   if (lightboxDownloadButton) {
     lightboxDownloadButton.hidden = !downloadUrl;
     lightboxDownloadButton.disabled = false;
-    lightboxDownloadButton.textContent = "Baixar original";
+    lightboxDownloadButton.textContent = "Baixar";
   }
   if (lightboxDeleteButton) {
     lightboxDeleteButton.hidden = !albumIsAdmin || !mediaId;
     lightboxDeleteButton.disabled = false;
-    lightboxDeleteButton.textContent = "Excluir memória";
+    lightboxDeleteButton.textContent = "Excluir";
   }
   lightbox.showModal();
 }
@@ -1599,6 +1629,7 @@ async function reloadAlbumGallery() {
   memoryGrid.replaceChildren();
   storyGroups.clear();
   if (payload.configured && payload.media?.length) {
+    indexAlbumContentHashes(payload.media);
     const entries = payload.media.map((media) => ({
       id: media.id,
       guestName: media.guestName,
@@ -1630,7 +1661,7 @@ async function deleteActiveMedia() {
   } catch (error) {
     showToast(error.message || "Não foi possível excluir esta memória.");
     lightboxDeleteButton.disabled = false;
-    lightboxDeleteButton.textContent = "Excluir memória";
+    lightboxDeleteButton.textContent = "Excluir";
   }
 }
 
@@ -1648,6 +1679,7 @@ async function initializeAlbumStorage() {
 
     albumStorageConfigured = true;
     memoryGrid.querySelectorAll("[data-demo-memory]").forEach((card) => card.remove());
+    indexAlbumContentHashes(payload.media);
     const entries = payload.media.map((media) => ({
       id: media.id,
       guestName: media.guestName,
@@ -1666,7 +1698,7 @@ async function initializeAlbumStorage() {
   }
 }
 
-function uploadFileToR2(file, upload, onProgress) {
+async function uploadFileToR2(file, upload, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", upload.uploadUrl);
@@ -1690,13 +1722,44 @@ function uploadFileToR2(file, upload, onProgress) {
   });
 }
 
-async function persistAlbumFile(file, guestName, category, onProgress) {
+function isRetryableUploadError(error) {
+  const message = String(error?.message || "");
+  return /conexão caiu|failed to fetch|network|timeout|expirou|salvar agora|não foi possível acessar/i.test(message);
+}
+
+function isDuplicateUploadError(error) {
+  return /já está no álbum/i.test(String(error?.message || ""));
+}
+
+function rememberAlbumContentHash(hash) {
+  if (hash) knownAlbumContentHashes.add(String(hash).toLowerCase());
+}
+
+function indexAlbumContentHashes(mediaList = []) {
+  knownAlbumContentHashes.clear();
+  mediaList.forEach((media) => rememberAlbumContentHash(media.contentHash));
+}
+
+async function computeFileContentHash(file) {
+  const buffer = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function persistAlbumFile(file, guestName, category, onProgress, contentHash) {
+  const hash = contentHash || await computeFileContentHash(file);
+  if (knownAlbumContentHashes.has(hash)) {
+    throw new Error("Esta memória já está no álbum.");
+  }
+
   const upload = await requestAlbumJson("/api/album/upload-signature", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      guestName,
       category,
+      contentHash: hash,
       fileName: file.name,
       fileType: file.type,
       fileSize: file.size,
@@ -1710,6 +1773,7 @@ async function persistAlbumFile(file, guestName, category, onProgress) {
       uploadToken: upload.uploadToken,
     }),
   });
+  rememberAlbumContentHash(hash);
   return {
     id: registered.media.id,
     guestName: registered.media.guestName,
@@ -1719,8 +1783,67 @@ async function persistAlbumFile(file, guestName, category, onProgress) {
     originalUrl: registered.media.originalUrl,
     type: registered.media.mimeType,
     createdAt: registered.media.createdAt,
+    contentHash: hash,
     file,
   };
+}
+
+async function persistAlbumFileWithRetry(file, guestName, category, onProgress, contentHash) {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await persistAlbumFile(file, guestName, category, onProgress, contentHash);
+    } catch (error) {
+      lastError = error;
+      if (isDuplicateUploadError(error) || !isRetryableUploadError(error) || attempt === 3) break;
+      await new Promise((resolve) => window.setTimeout(resolve, attempt * 1500));
+    }
+  }
+  throw lastError;
+}
+
+async function uploadPendingFiles(files, guestName, category) {
+  const uploaded = [];
+  const failed = [];
+  const batchHashes = new Set();
+
+  setUploadBusy(true);
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    setUploadProgress((index / files.length) * 100, `Enviando ${index + 1} de ${files.length}...`);
+    let contentHash;
+    try {
+      contentHash = await computeFileContentHash(file);
+      if (knownAlbumContentHashes.has(contentHash) || batchHashes.has(contentHash)) {
+        removePendingFile(file);
+        failed.push({ file, message: "Esta memória já está no álbum.", duplicate: true });
+        continue;
+      }
+      batchHashes.add(contentHash);
+      const entry = await persistAlbumFileWithRetry(file, guestName, category, (fileProgress) => {
+        const overallProgress = ((index + fileProgress) / files.length) * 100;
+        setUploadProgress(overallProgress, `Enviando ${index + 1} de ${files.length}...`);
+      }, contentHash);
+      uploaded.push(entry);
+      removePendingFile(file);
+    } catch (error) {
+      if (contentHash) batchHashes.delete(contentHash);
+      if (isDuplicateUploadError(error)) {
+        removePendingFile(file);
+      }
+      failed.push({
+        file,
+        message: error?.message || "Não foi possível concluir o envio.",
+        duplicate: isDuplicateUploadError(error),
+      });
+    }
+  }
+
+  if (uploaded.length === files.length) {
+    setUploadProgress(100, "Memórias salvas com qualidade original");
+  }
+  setUploadBusy(false);
+  return { uploaded, failed };
 }
 
 document.querySelectorAll("[data-open-upload]").forEach((button) => {
@@ -1743,7 +1866,7 @@ lightboxDownloadButton?.addEventListener("click", async () => {
   lightboxDownloadButton.textContent = "Baixando...";
   try {
     await downloadMediaFile(activeLightboxDownload);
-    lightboxDownloadButton.textContent = "Baixar original";
+    lightboxDownloadButton.textContent = "Baixar";
   } catch (error) {
     lightboxDownloadButton.textContent = "Tentar de novo";
     showToast(error.message || "Não foi possível baixar a mídia.");
@@ -1820,43 +1943,35 @@ uploadForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  const formData = new FormData(uploadForm);
-  const guestName = String(formData.get("guestName") || "").trim();
-  const category = String(formData.get("category") || "");
-  if (guestName.length < 2) {
-    showUploadError("Informe seu nome para publicar as memórias.");
-    return;
-  }
-  const nameParts = guestName.split(/\s+/).filter(Boolean);
-  if (nameParts.length < 2 || nameParts.some((part) => part.length < 2)) {
-    showUploadError("Informe nome e sobrenome para publicar as memórias.");
+  if (!albumSessionGuestName) {
+    showUploadError("Sessão expirada. Entre no álbum novamente.");
     return;
   }
 
+  const category = String(new FormData(uploadForm).get("category") || "");
+
   let entries;
   if (albumStorageConfigured) {
-    entries = [];
-    setUploadBusy(true);
-    setUploadProgress(0, `Enviando 1 de ${files.length}...`);
-    try {
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index];
-        const entry = await persistAlbumFile(file, guestName, category, (fileProgress) => {
-          const overallProgress = ((index + fileProgress) / files.length) * 100;
-          setUploadProgress(overallProgress, `Enviando ${index + 1} de ${files.length}...`);
-        });
-        entries.push(entry);
-      }
-      setUploadProgress(100, "Memórias salvas com qualidade original");
-    } catch (uploadFailure) {
+    const { uploaded, failed } = await uploadPendingFiles(files, albumSessionGuestName, category);
+    entries = uploaded;
+    renderSelectedFiles();
+
+    if (failed.length) {
       if (entries.length) addMemoriesToGallery(entries);
-      showUploadError(uploadFailure.message || "Não foi possível concluir o envio.");
-      setUploadBusy(false);
+      const failureMessage = failed.length === 1
+        ? failed[0].message
+        : `${failed.length} arquivos não foram enviados.`;
+      const successSuffix = entries.length
+        ? ` ${entries.length} ${entries.length === 1 ? "já foi publicado" : "já foram publicados"}. Toque em Publicar para tentar o restante.`
+        : " Verifique a conexão e toque em Publicar para tentar de novo.";
+      showUploadError(`${failureMessage}${successSuffix}`);
+      if (entries.length) {
+        showToast(`${entries.length} memória${entries.length === 1 ? "" : "s"} publicada${entries.length === 1 ? "" : "s"}. Continue o envio quando puder.`);
+      }
       return;
     }
-    setUploadBusy(false);
   } else {
-    entries = files.map((file) => ({ file, guestName, category, type: file.type }));
+    entries = files.map((file) => ({ file, guestName: albumSessionGuestName, category, type: file.type }));
   }
 
   addMemoriesToGallery(entries);
@@ -1914,6 +2029,8 @@ async function ensureAlbumSession() {
       return false;
     }
     albumIsAdmin = Boolean(payload.isAlbumAdmin);
+    albumSessionGuestName = String(payload.guestName || "").trim();
+    updateUploadUserLabel();
     if (logoutButton) {
       logoutButton.hidden = false;
       logoutButton.addEventListener("click", async () => {
