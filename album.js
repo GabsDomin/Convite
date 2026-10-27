@@ -2648,6 +2648,4 @@ ensureAlbumSession().then((ok) => {
   if (!ok) return;
   initializeAlbumStorage();
   loadChallenges();
-  // Dentro do álbum a pessoa já tem nome: o aparelho fica ligado a ela para avisos pessoais.
-  window.setTimeout(() => window.GabNaiaPush?.mountBanner(), 1500);
 });

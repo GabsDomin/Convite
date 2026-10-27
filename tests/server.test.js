@@ -653,3 +653,22 @@ test("configuração da Vercel inclui os arquivos lidos pelo servidor Node", asy
   const config = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
   assert.equal(config.functions?.["server.ts"]?.includeFiles, "**/*");
 });
+
+test("avisos do site foram desligados: sem faixa, sem rotas e o service worker antigo se remove", async () => {
+  for (const pathname of ["/push-client.js", "/manifest.webmanifest", "/api/push/config"]) {
+    const response = await fetch(`${baseUrl}${pathname}`);
+    assert.equal(response.status, 404, pathname);
+  }
+  const subscribe = await fetch(`${baseUrl}/api/push/subscribe`, { method: "POST", body: "{}" });
+  assert.notEqual(subscribe.status, 200);
+
+  const serviceWorker = await (await fetch(`${baseUrl}/sw.js`)).text();
+  assert.match(serviceWorker, /unsubscribe\(\)/);
+  assert.match(serviceWorker, /registration\.unregister\(\)/);
+  assert.doesNotMatch(serviceWorker, /showNotification/);
+
+  for (const file of ["../index.html", "../album.html", "../script.js", "../album.js"]) {
+    const content = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.doesNotMatch(content, /push-client|GabNaiaPush/, file);
+  }
+});

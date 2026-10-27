@@ -1683,8 +1683,6 @@ window.addEventListener("load", () => {
   loadPaymentConfig();
   loadGifts();
   startWeddingAudio({ unmute: true, allowMutedFallback: false });
-  // Pequena espera para a faixa de avisos não disputar atenção com a abertura do convite.
-  window.setTimeout(() => window.GabNaiaPush?.mountBanner(), 2500);
 });
 
 document.addEventListener("visibilitychange", () => {

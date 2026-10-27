@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check server.js && node --check script.js && node --check album.js && node --check album-login.js && node --check push-client.js && node --check sw.js && node --check scripts/setup-google-drive.mjs && node --check cloudflare/drive-backup-worker/src/index.js && node --test",
+    "check": "node --check server.js && node --check script.js && node --check album.js && node --check album-login.js && node --check sw.js && node --check scripts/setup-google-drive.mjs && node --check cloudflare/drive-backup-worker/src/index.js && node --test",
     "setup:drive": "node scripts/setup-google-drive.mjs"
   },
   "engines": {
@@ -14,8 +14,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1091.0",
-    "@aws-sdk/s3-request-presigner": "^3.1091.0",
-    "web-push": "3.6.7"
+    "@aws-sdk/s3-request-presigner": "^3.1091.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

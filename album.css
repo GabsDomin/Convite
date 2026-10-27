@@ -3309,10 +3309,3 @@ li[data-podium="3"] .ranking-position {
   line-height: 1.35;
   text-align: center;
 }
-
-/* Faixa de avisos (push-client.js) acima da barra de navegação do celular */
-@media (max-width: 620px) {
-  body {
-    --push-banner-bottom: 88px;
-  }
-}
