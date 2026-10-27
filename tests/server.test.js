@@ -436,14 +436,13 @@ test("confirmação prioriza os detalhes da cerimônia sem pressionar por presen
   assert.doesNotMatch(script, /Se entrou aqui procurando um presentinho/);
 });
 
-test("detalhes apresentam cerimônia, jantar e programação sem traje ou padrinhos", async () => {
+test("detalhes apresentam cerimônia (com a chegada) e jantar, sem recepção, traje ou padrinhos", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 
-  assert.match(html, /<h3>Cerimônia<\/h3>[\s\S]*?<strong>18h<\/strong>/);
+  assert.match(html, /<h3>Cerimônia<\/h3>[\s\S]*?<strong>17h30<\/strong>\s*<span class="info-card-note">Chegada a partir das 17h<\/span>/);
   assert.match(html, /começam a chegar às 17h/);
-  assert.doesNotMatch(html, /17h20/);
+  assert.doesNotMatch(html, /17h20|18h|Programação|[Rr]ecepção/);
   assert.match(html, /<h3>Jantar<\/h3>[\s\S]*?<strong>Após a cerimônia<\/strong>/);
-  assert.match(html, /<h3>Programação<\/h3>[\s\S]*?<strong>Recepção às 17h30<\/strong>/);
   assert.doesNotMatch(html, /11h30|Almoço|Traje|madrinhas|padrinhos/i);
 });
 
