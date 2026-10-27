@@ -12,8 +12,12 @@ self.addEventListener("push", (event) => {
   const title = payload.title || "Gabriel & Halanaia";
   event.waitUntil(self.registration.showNotification(title, {
     body: payload.body || "",
-    icon: "/assets/favicon.png",
-    badge: "/assets/favicon.png",
+    // icon: imagem grande ao lado do texto. badge: ícone da barra de status do Android,
+    // que precisa ser branco com fundo transparente (senão o Android mostra o ícone do Chrome).
+    icon: "/assets/icon-192.png",
+    badge: "/assets/notification-badge.png",
+    ...(payload.image ? { image: payload.image } : {}),
+    vibrate: [120, 60, 120],
     tag: payload.tag || "gab-naia",
     data: { url: payload.url || "/album" },
   }));
